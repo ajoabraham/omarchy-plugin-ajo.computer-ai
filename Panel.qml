@@ -238,6 +238,9 @@ Item {
   }
 
   property string probedAgent: ""
+  // Set by selectAgent: the next settings probe ignores the saved model
+  // and selects (and persists) the new assistant's default.
+  property bool resetModelOnProbe: false
 
   function refreshSettings() {
     if (settingsProc.running) return
@@ -434,7 +437,16 @@ Item {
         root.voiceOptions = options
         if (agents.length > 0) root.agentOptions = agents
         root.modelOptions = models
-        root.model = curModel !== "" ? curModel : (models.length > 0 ? models[0].value : "")
+        if (root.resetModelOnProbe && root.agent === root.probedAgent) {
+          root.resetModelOnProbe = false
+          root.model = models.length > 0 ? models[0].value : ""
+          if (root.model !== "") {
+            setModelProc.command = [root.binDir + "/config-set.sh", "model_" + root.agent, JSON.stringify(root.model)]
+            setModelProc.running = true
+          }
+        } else {
+          root.model = curModel !== "" ? curModel : (models.length > 0 ? models[0].value : "")
+        }
         root.voice = current !== "" ? current
           : (options.indexOf("kokoro:af_heart") >= 0 ? "kokoro:af_heart" : (options[0] || ""))
         // The model list was fetched for the agent we knew before this
@@ -466,8 +478,11 @@ Item {
     agent = name
     setConfigProc.command = [binDir + "/config-set.sh", "agent", JSON.stringify(name)]
     setConfigProc.running = true
-    // Reload the model dropdown for the newly selected harness.
+    // Reload the model dropdown for the newly selected harness — and snap
+    // to that harness's default (best/latest) model rather than restoring
+    // an older override.
     modelOptions = []
+    resetModelOnProbe = true
     Qt.callLater(refreshSettings)
   }
 
