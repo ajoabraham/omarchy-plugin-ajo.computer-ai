@@ -62,9 +62,13 @@ Item {
   property real silenceMs: 0
   property int loudStreak: 0
   property real listenedMs: 0
-  // Precomputed RMS timeline of the reply audio; stepped by speechTimer.
+  // Per-chunk RMS timeline of the reply audio; stepped by speechTimer.
+  // chunkFrac* map the current chunk onto the whole reply text for the
+  // teleprompter (set by speak.sh's FRAC lines).
   property var speechLevels: []
   property int speechIndex: -1
+  property real chunkFracStart: 0
+  property real chunkFracEnd: 1
 
   // Free-running phase for bar wobble / chase / idle drift.
   property real animPhase: 0
@@ -382,6 +386,21 @@ Item {
     stdout: SplitParser {
       onRead: function(line) {
         line = String(line).trim()
+        // Sentence-streamed replies arrive as repeating CHUNK/LEVEL*/PLAY
+        // groups: each chunk resets the level timeline so the orb tracks
+        // the sentence that's actually playing.
+        if (line === "CHUNK") {
+          speechTimer.stop()
+          root.speechLevels = []
+          root.speechIndex = -1
+          return
+        }
+        if (line.indexOf("FRAC ") === 0) {
+          var fr = line.slice(5).split(" ")
+          root.chunkFracStart = parseFloat(fr[0]) || 0
+          root.chunkFracEnd = parseFloat(fr[1]) || 1
+          return
+        }
         if (line.indexOf("LEVEL ") === 0) {
           var db = line.slice(6) === "-inf" ? -90 : parseFloat(line.slice(6))
           // Push without rebinding the whole array each line.
@@ -858,9 +877,11 @@ Item {
 
           readonly property real progress: {
             if (root.phase === "speaking") {
+              var within = 0
               if (root.speechLevels.length > 1 && root.speechIndex > 0)
-                return Math.min(1, root.speechIndex / (root.speechLevels.length - 1))
-              return 0
+                within = Math.min(1, root.speechIndex / (root.speechLevels.length - 1))
+              // Map chunk-local progress onto the whole reply.
+              return root.chunkFracStart + within * (root.chunkFracEnd - root.chunkFracStart)
             }
             return 1
           }
