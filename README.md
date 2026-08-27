@@ -23,7 +23,8 @@ control media) within a user-approved permission policy.
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/<you>/computer-ai   # or clone + symlink:
+omarchy plugin add https://github.com/ajoabraham/omarchy-plugin-ajo.computer-ai
+# (or for development: clone and symlink)
 # ln -s /path/to/computer-ai ~/.config/omarchy/plugins/ajo.computer-ai
 
 # Installing never runs plugin code, so run setup once — it checks
