@@ -1,5 +1,7 @@
 # Computer AI
 
+![Computer AI — voice assistant panel for Omarchy](preview.png)
+
 A Jarvis-style voice assistant plugin for the [Omarchy](https://omarchy.org)
 shell. Press a hotkey, speak, and a pluggable AI agent answers aloud — and
 can operate the desktop (launch apps, drive the browser, set reminders,
