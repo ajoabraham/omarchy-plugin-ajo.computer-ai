@@ -50,6 +50,17 @@ o.bind("End", "Computer", os.getenv("HOME") .. "/.config/omarchy/plugins/ajo.com
 o.window({ class = "^(org\\.quickshell)$", title = "^(Computer)$" }, { float = true, center = true })
 ```
 
+## Uninstall
+
+```bash
+omarchy plugin remove ajo.computer-ai
+```
+
+removes the plugin cleanly. Optional leftovers you may also delete:
+`~/.local/share/computer/` (voices, memory, permission policy, state),
+`~/.config/omarchy/computer.json`, and the two Hyprland lines that
+`setup.sh --wire` added.
+
 ## Controls
 
 Enter — speak / send / interrupt · Esc — close · Super+drag — move ·
