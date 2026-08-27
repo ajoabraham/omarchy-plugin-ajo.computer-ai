@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(omarchy:*)",
+      "Bash(xdg-open:*)",
+      "Bash(uwsm-app:*)",
+      "Bash(hyprctl:*)",
+      "Bash(wpctl:*)",
+      "Bash(playerctl:*)",
+      "Bash(notify-send:*)",
+      "Bash(wl-copy:*)",
+      "Bash(pacman -Q:*)",
+      "Bash(systemctl --user status:*)",
+      "Bash(df:*)",
+      "Bash(free:*)",
+      "Bash(sensors:*)",
+      "Bash(__PLUGIN_DIR__/bin/request-grant.sh:*)",
+      "Bash(__PLUGIN_DIR__/bin/new-conversation.sh:*)",
+      "WebFetch",
+      "WebSearch",
+      "Read(~/.local/share/computer/memory/**)",
+      "Write(~/.local/share/computer/memory/**)",
+      "Edit(~/.local/share/computer/memory/**)",
+      "mcp__claude-in-chrome"
+    ]
+  }
+}

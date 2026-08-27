@@ -28,6 +28,12 @@ cd "$HOME"
 
 mkdir -p "$mem_dir" "$state_dir"
 [ -f "$mem_dir/MEMORY.md" ] || printf '# Computer memory index\n' > "$mem_dir/MEMORY.md"
+# First run: seed the user's permission policy from the shipped defaults
+# (never overwritten afterwards — apply-grant.sh appends user-approved rules
+# to the live copy, which is user data and stays out of the repo).
+if [ ! -f "$settings_file" ]; then
+  sed "s|__PLUGIN_DIR__|$plugin_dir|g" "$plugin_dir/defaults/permissions.json" > "$settings_file"
+fi
 memory=$(head -c 4000 "$mem_dir/MEMORY.md" 2>/dev/null)
 now=$(date '+%A, %B %d %Y, %H:%M')
 
