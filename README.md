@@ -24,16 +24,23 @@ control media) within a user-approved permission policy.
 
 ```bash
 omarchy plugin add https://github.com/<you>/computer-ai   # or clone + symlink:
-ln -s /path/to/computer-ai ~/.config/omarchy/plugins/ajo.computer-ai
+# ln -s /path/to/computer-ai ~/.config/omarchy/plugins/ajo.computer-ai
+
+# Installing never runs plugin code, so run setup once — it checks
+# dependencies, downloads a starter TTS voice, seeds the permission
+# policy, and (with --wire) adds the Hyprland keybinding + float rule:
+bash ~/.config/omarchy/plugins/ajo.computer-ai/bin/setup.sh --wire
+
 omarchy plugin enable ajo.computer-ai
 ```
 
-Dependencies: `voxtype` (`omarchy voxtype install`), `ffmpeg`, `jq`,
-pipewire (`pw-play`), and at least one agent CLI (`claude`, `grok`, or
-`codex`). TTS voices live in `~/.local/share/computer/` (Piper binary +
-voices, optional Kokoro venv — see `bin/speak.sh`).
+Dependencies (setup.sh checks them all): `voxtype`
+(`omarchy voxtype install`), `ffmpeg`, `jq`, pipewire (`pw-play`), and at
+least one agent CLI (`claude`, `grok`, or `codex`). TTS lives in
+`~/.local/share/computer/` — setup fetches Piper plus one voice; more Piper
+voices and the nicer Kokoro engine are documented in `bin/speak.sh`.
 
-Suggested Hyprland wiring (`~/.config/hypr/`):
+The Hyprland wiring setup adds (or prints, without `--wire`):
 
 ```lua
 -- bindings.lua — summon on a key (End = Fn+Right on most laptops)

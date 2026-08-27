@@ -4,7 +4,7 @@
   "name": "Computer AI",
   "version": "1.0.0",
   "author": "ajo",
-  "description": "Voice assistant for Omarchy: press a hotkey, speak, and a pluggable AI agent (Claude, Grok, ChatGPT, ...) answers aloud and can operate the desktop. Summon with: omarchy-shell shell summon ajo.computer-ai '{\"listen\": true}'",
+  "description": "Voice assistant for Omarchy: press a hotkey, speak, and a pluggable AI agent (Claude, Grok, ChatGPT, ...) answers aloud and can operate the desktop. After install run: bin/setup.sh --wire. Summon with: omarchy-shell shell summon ajo.computer-ai '{\"listen\": true}'",
   "kinds": [
     "panel"
   ],
