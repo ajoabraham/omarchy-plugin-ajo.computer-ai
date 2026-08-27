@@ -93,6 +93,13 @@ if [ ! -x "$adapter" ]; then
   exit 1
 fi
 
+# Model: the user's per-agent choice, else the adapter's recommended
+# latest/best (first line of its model list). "default" lets the harness
+# use its own configured default.
+model=$(jq -r ".model_$agent // empty" "$cfg" 2>/dev/null)
+[ -n "$model" ] || model=$("$adapter" --list-models 2>/dev/null | head -n1 | cut -d'|' -f1)
+export COMPUTER_MODEL="$model"
+
 # --- conversation threading ---------------------------------------------
 # State file: "<session-uuid> <last-used-epoch> <agent> <started:0|1>".
 mode="${2:-follow}"

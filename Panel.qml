@@ -109,8 +109,11 @@ Item {
     }
   }
 
-  // Harness adapters discovered from agents/*.sh populate the dropdown.
+  // Harness adapters discovered from agents/*.sh populate the dropdown;
+  // each adapter's --list-models fills the model dropdown beside it.
   property var agentOptions: [{ value: "claude", label: "Claude" }]
+  property var modelOptions: []
+  property string model: ""
 
   function agentLabelFor(name) {
     var known = { claude: "Claude", grok: "Grok", chatgpt: "ChatGPT" }
@@ -234,8 +237,21 @@ Item {
     speakProc.running = true
   }
 
+  property string probedAgent: ""
+
   function refreshSettings() {
-    if (!settingsProc.running) settingsProc.running = true
+    if (settingsProc.running) return
+    probedAgent = agent
+    var agentsDir = home + "/.config/omarchy/plugins/ajo.computer-ai/agents"
+    settingsProc.command = ["bash", "-c",
+      "cd \"$HOME/.local/share/computer/voices\" 2>/dev/null && ls -1 *.onnx 2>/dev/null | sed 's/\\.onnx$//'; " +
+      "[ -f \"$HOME/.local/share/computer/kokoro/kokoro-v1.0.onnx\" ] && printf 'kokoro:%s\\n' af_heart af_bella af_sky am_michael am_puck bf_emma bf_isabella bm_george bm_fable; " +
+      "for f in \"" + agentsDir + "/\"*.sh; do [ -x \"$f\" ] && printf 'agentopt %s\\n' \"$(basename \"$f\" .sh)\"; done; " +
+      "\"" + agentsDir + "/" + agent + ".sh\" --list-models 2>/dev/null | sed 's/^/modelopt /'; " +
+      "jq -r '.model_" + agent + " // empty' \"$HOME/.config/omarchy/computer.json\" 2>/dev/null | sed 's/^/curmodel /'; " +
+      "jq -r '.voice // empty' \"$HOME/.config/omarchy/computer.json\" 2>/dev/null | sed 's/^/current /'; " +
+      "jq -r '.agent // \"claude\"' \"$HOME/.config/omarchy/computer.json\" 2>/dev/null | sed 's/^/agent /'"]
+    settingsProc.running = true
   }
 
   function refreshGrants() {
@@ -388,23 +404,26 @@ Item {
 
   Process {
     id: settingsProc
-    command: ["bash", "-c",
-      "cd \"$HOME/.local/share/computer/voices\" 2>/dev/null && ls -1 *.onnx 2>/dev/null | sed 's/\\.onnx$//'; " +
-      "[ -f \"$HOME/.local/share/computer/kokoro/kokoro-v1.0.onnx\" ] && printf 'kokoro:%s\\n' af_heart af_bella af_sky am_michael am_puck bf_emma bf_isabella bm_george bm_fable; " +
-      "for f in \"$HOME/.config/omarchy/plugins/ajo.computer-ai/agents/\"*.sh; do [ -x \"$f\" ] && printf 'agentopt %s\\n' \"$(basename \"$f\" .sh)\"; done; " +
-      "jq -r '.voice // empty' \"$HOME/.config/omarchy/computer.json\" 2>/dev/null | sed 's/^/current /'; " +
-      "jq -r '.agent // \"claude\"' \"$HOME/.config/omarchy/computer.json\" 2>/dev/null | sed 's/^/agent /'"]
+    // command is built per-run by refreshSettings() (it embeds the current
+    // agent to fetch that adapter's model list).
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         var options = []
         var agents = []
+        var models = []
         var current = ""
+        var curModel = ""
         var lines = String(text || "").split("\n")
         for (var i = 0; i < lines.length; i++) {
           var line = lines[i].trim()
           if (line === "") continue
           if (line.indexOf("current ") === 0) current = line.slice(8)
+          else if (line.indexOf("curmodel ") === 0) curModel = line.slice(9)
+          else if (line.indexOf("modelopt ") === 0) {
+            var parts = line.slice(9).split("|")
+            models.push({ value: parts[0], label: parts[1] || parts[0] })
+          }
           else if (line.indexOf("agentopt ") === 0) {
             var name = line.slice(9)
             agents.push({ value: name, label: root.agentLabelFor(name) })
@@ -414,8 +433,13 @@ Item {
         }
         root.voiceOptions = options
         if (agents.length > 0) root.agentOptions = agents
+        root.modelOptions = models
+        root.model = curModel !== "" ? curModel : (models.length > 0 ? models[0].value : "")
         root.voice = current !== "" ? current
           : (options.indexOf("kokoro:af_heart") >= 0 ? "kokoro:af_heart" : (options[0] || ""))
+        // The model list was fetched for the agent we knew before this
+        // probe; if the config named a different one, refetch for it.
+        if (root.agent !== root.probedAgent) root.refreshSettings()
       }
     }
   }
@@ -442,6 +466,21 @@ Item {
     agent = name
     setConfigProc.command = [binDir + "/config-set.sh", "agent", JSON.stringify(name)]
     setConfigProc.running = true
+    // Reload the model dropdown for the newly selected harness.
+    modelOptions = []
+    Qt.callLater(refreshSettings)
+  }
+
+  function selectModel(name) {
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    if (name === "" || name === model) return
+    model = name
+    setModelProc.command = [binDir + "/config-set.sh", "model_" + agent, JSON.stringify(name)]
+    setModelProc.running = true
+  }
+
+  Process {
+    id: setModelProc
   }
 
   // --- UI ---
@@ -873,12 +912,28 @@ Item {
             width: parent.width
             spacing: Style.space(12)
 
-            Dropdown {
+            // Assistant on the left, that assistant's model on the right.
+            RowLayout {
               Layout.fillWidth: true
-              label: "Assistant"
-              options: root.agentOptions
-              value: root.agent
-              onChanged: function(newValue) { root.selectAgent(newValue) }
+              spacing: Style.space(12)
+
+              Dropdown {
+                Layout.fillWidth: true
+                Layout.preferredWidth: 1
+                label: "Assistant"
+                options: root.agentOptions
+                value: root.agent
+                onChanged: function(newValue) { root.selectAgent(newValue) }
+              }
+
+              Dropdown {
+                Layout.fillWidth: true
+                Layout.preferredWidth: 1
+                label: "Model"
+                options: root.modelOptions
+                value: root.model
+                onChanged: function(newValue) { root.selectModel(newValue) }
+              }
             }
 
             Dropdown {

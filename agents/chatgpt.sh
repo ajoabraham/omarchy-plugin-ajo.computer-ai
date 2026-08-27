@@ -8,6 +8,22 @@
 #   runs read-only, so ChatGPT answers questions and reads the system but
 #   does not take desktop actions.
 set -u
+
+# Codex has no model-list command; "default" lets its config decide.
+if [ "${1:-}" = "--list-models" ]; then
+  printf '%s\n' \
+    "default|Default (latest)" \
+    "gpt-5.1-codex|GPT-5.1 Codex" \
+    "gpt-5.1|GPT-5.1" \
+    "gpt-5.1-codex-mini|GPT-5.1 Codex Mini"
+  exit 0
+fi
+
+model_flags=()
+if [ -n "${COMPUTER_MODEL:-}" ] && [ "$COMPUTER_MODEL" != "default" ]; then
+  model_flags=(-m "$COMPUTER_MODEL")
+fi
+
 out=$(mktemp)
 trap 'rm -f "$out"' EXIT
 
@@ -19,13 +35,13 @@ up and read, but not launch apps or change anything. Say so if asked to act.
 Request: $1"
 
 if [ "$COMPUTER_CONV_STARTED" = "1" ]; then
-  if codex exec resume --last - -s read-only --skip-git-repo-check -o "$out" \
+  if codex exec resume --last - -s read-only --skip-git-repo-check "${model_flags[@]}" -o "$out" \
     <<<"Request: $1" >/dev/null 2>&1 && [ -s "$out" ]; then
     cat "$out"
     exit 0
   fi
 fi
-codex exec - -s read-only --skip-git-repo-check -o "$out" <<<"$prompt" >/dev/null 2>&1
+codex exec - -s read-only --skip-git-repo-check "${model_flags[@]}" -o "$out" <<<"$prompt" >/dev/null 2>&1
 if [ ! -s "$out" ]; then
   # Speak the failure instead of dying silently — the usual cause is auth.
   echo "The ChatGPT harness couldn't answer. It's usually not signed in — run codex login in a terminal, then try me again."
