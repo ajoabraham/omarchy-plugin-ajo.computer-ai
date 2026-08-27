@@ -50,6 +50,32 @@ o.bind("End", "Computer", os.getenv("HOME") .. "/.config/omarchy/plugins/ajo.com
 o.window({ class = "^(org\\.quickshell)$", title = "^(Computer)$" }, { float = true, center = true })
 ```
 
+## Security & privilege boundaries
+
+Like all Omarchy shell plugins, this runs unsandboxed with your user
+permissions — and unlike most, it drives AI agent CLIs that can execute
+commands. Know the boundaries:
+
+- Agents run headless under an **allowlist** seeded from
+  `defaults/permissions.json` into `~/.local/share/computer/claude-settings.json`:
+  desktop actions (`omarchy`, `xdg-open`, `uwsm-app`, `hyprctl`), media/
+  notification/clipboard tools, read-only system info, web lookup, and their
+  own memory directory. Everything else is denied.
+- Escalation is human-gated: an agent may *request* a rule
+  (`bin/request-grant.sh`), but only you can approve it, on a card in the
+  panel. Grants are permanent until you remove the line from the settings
+  file. The system prompt forbids requesting broad rules, sudo, or writes
+  outside the plugin's own data directories.
+- Browser control (Claude harness) touches your real, logged-in Chromium and
+  additionally requires a one-time automation grant in the Claude browser
+  extension, where per-site limits are also available. The ChatGPT harness
+  runs in Codex's read-only sandbox and takes no actions.
+- Voice is an input channel: anything the assistant is permitted to do, a
+  misheard phrase could trigger. Keep the allowlist as narrow as you can
+  live with.
+- Audio is processed locally (Voxtype/whisper STT, Piper/Kokoro TTS);
+  transcribed text goes only to the agent CLI you selected.
+
 ## Uninstall
 
 ```bash
