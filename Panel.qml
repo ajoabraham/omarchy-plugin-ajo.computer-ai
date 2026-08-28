@@ -64,6 +64,10 @@ Item {
   // agent. Toggle with '/'.
   property bool typing: false
 
+  // A soft ambient tone plays while the agent is thinking (off if other audio
+  // is already going). Toggle in Settings; persisted as tone_enabled.
+  property bool toneEnabled: true
+
   // --- what the agent is doing right now ---
 
   // Ctrl+I opens the activity drawer. Adapters that can watch their harness
@@ -139,13 +143,25 @@ Item {
   }
 
   onBusyChanged: {
-    if (!busy) return
-    turnStartedMs = Date.now()
-    elapsedS = 0
-    activityModel.clear()
-    lastActivity = null
-    turnCtx = 0
-    turnSummary = null
+    if (busy) {
+      turnStartedMs = Date.now()
+      elapsedS = 0
+      activityModel.clear()
+      lastActivity = null
+      turnCtx = 0
+      turnSummary = null
+      // Start the ambient tone (the script itself bails if other audio plays).
+      if (toneEnabled && !toneProc.running) toneProc.running = true
+    } else {
+      // Leaving thinking → the reply is about to speak; the script fades out.
+      if (toneProc.running) toneProc.running = false
+    }
+  }
+
+  // Setting running=false sends SIGTERM; thinking-tone.sh traps it and fades.
+  Process {
+    id: toneProc
+    command: [binDir + "/thinking-tone.sh"]
   }
 
   Timer {
@@ -306,6 +322,7 @@ Item {
     lastActivity = null
     typing = false
     if (inputEdit) inputEdit.text = ""
+    if (toneProc.running) toneProc.running = false
   }
 
   function dismiss() {
@@ -444,7 +461,7 @@ Item {
   Process {
     id: micProc
     command: ["bash", "-c",
-      "jq -r '[(.mic_threshold_db // \"\"), (.mic_end_silence_ms // \"\")] | @tsv' " +
+      "jq -r '[(.mic_threshold_db // \"\"), (.mic_end_silence_ms // \"\"), (.tone_enabled // \"\")] | @tsv' " +
       "\"$HOME/.config/omarchy/computer.json\" 2>/dev/null"]
     stdout: StdioCollector {
       waitForEnd: true
@@ -454,6 +471,8 @@ Item {
         var sil = parseFloat(parts[1])
         if (!isNaN(thr)) root.speechThresholdDb = Math.max(-70, Math.min(-20, thr))
         if (!isNaN(sil)) root.endSilenceMs = Math.max(800, Math.min(5000, sil))
+        var te = String(parts[2] || "").trim()
+        if (te !== "") root.toneEnabled = (te !== "false")
       }
     }
   }
@@ -717,6 +736,13 @@ Item {
 
   Process {
     id: setConfigProc
+  }
+
+  function toggleTone() {
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    toneEnabled = !toneEnabled
+    setConfigProc.command = [binDir + "/config-set.sh", "tone_enabled", toneEnabled ? "true" : "false"]
+    setConfigProc.running = true
   }
 
   function selectVoice(name) {
@@ -1686,6 +1712,47 @@ Item {
               options: root.voiceOptions
               value: root.voice
               onChanged: function(newValue) { root.selectVoice(newValue) }
+            }
+
+            // Ambient "thinking" tone on/off.
+            RowLayout {
+              Layout.fillWidth: true
+              spacing: Style.space(10)
+
+              Text {
+                text: "Thinking sound"
+                color: Qt.alpha(Color.popups.text, 0.7)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+                Layout.fillWidth: true
+              }
+
+              Rectangle {
+                implicitWidth: Style.space(58)
+                implicitHeight: Style.space(24)
+                radius: height / 2
+                color: root.toneEnabled ? Qt.alpha(root.ember, 0.22)
+                                        : Qt.alpha(Color.popups.text, 0.08)
+                border.width: Math.max(1, Style.normalBorderWidth)
+                border.color: root.toneEnabled ? Qt.alpha(root.ember, 0.6)
+                                               : Qt.alpha(Color.popups.text, 0.2)
+                Behavior on color { ColorAnimation { duration: 150 } }
+
+                Rectangle {
+                  width: Style.space(18); height: width; radius: width / 2
+                  y: (parent.height - height) / 2
+                  x: root.toneEnabled ? parent.width - width - Style.space(3) : Style.space(3)
+                  color: root.toneEnabled ? root.ember : Qt.alpha(Color.popups.text, 0.5)
+                  Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                  Behavior on color { ColorAnimation { duration: 150 } }
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.toggleTone()
+                }
+              }
             }
           }
         }

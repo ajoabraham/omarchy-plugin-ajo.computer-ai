@@ -18,6 +18,10 @@ control media) within a user-approved permission policy.
   stays uncluttered.
 - **Pipeline**: ffmpeg capture with voice-activity endpointing → Voxtype
   (whisper) transcription → agent harness → Kokoro/Piper TTS.
+- **Thinking tone**: a soft, evolving ambient pad plays while the agent works
+  — one of four generative moods chosen at random, synthesized live (no audio
+  files), low and unobtrusive. It stays silent if other audio is already
+  playing and fades out as the reply begins. Toggle it in Settings.
 - **Mic calibration by voice**: say "help me tune my microphone" and the
   agent walks it out loud. It measures the audio of the sentence you *just
   spoke* — no "speak now" cue, every turn is a sample — reports the level
