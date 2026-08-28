@@ -31,4 +31,10 @@ if [ "$verdict" = "allow" ] && [ -n "$rule" ]; then
     jq --arg v "$dir" "$filter" "$settings" > "$tmp" && mv "$tmp" "$settings"
   fi
 fi
-sed -i '1d' "$pending"
+# Drop EVERY queued entry for this rule, not just the first line. The agent
+# re-requests each turn until approved, so the same rule can be queued several
+# times; clearing only line 1 would make the card reappear after one Allow and
+# read as if the keypress did nothing.
+tmp=$(mktemp)
+jq -c --arg r "$rule" 'select(.rule != $r)' "$pending" > "$tmp" 2>/dev/null || : > "$tmp"
+mv "$tmp" "$pending"

@@ -158,12 +158,24 @@ Item {
 
   // Live mic RMS in dB while listening (~20 samples/s from miclevel.sh).
   property real micDb: -90
-  // Voice-activity endpointing: once speech has been heard, ~1.5s of
-  // sustained silence ends the recording; 10s of nothing at all gives up.
-  // Speech only counts after 3 consecutive loud frames (150ms) so the
-  // capture-stream's opening click or a cough can't arm the endpointer,
-  // and the first 600ms are ignored entirely as stream warm-up.
-  readonly property real speechThresholdDb: -42
+  // Voice-activity endpointing. Speech only counts after 3 consecutive loud
+  // frames (150ms) so the capture-stream's opening click or a cough can't
+  // arm the endpointer, and the first 600ms are ignored entirely as stream
+  // warm-up. The two thresholds below are the tuning knobs:
+  //   speechThresholdDb  — quieter than this counts as silence. Sits well
+  //                        above the room's noise floor but below speech, so
+  //                        between-word dips don't read as a pause.
+  //   endSilenceMs       — sustained silence after speech that ends the turn.
+  //                        Raise it if it cuts you off mid-sentence; lower it
+  //                        for a snappier hand-off. (Enter always sends now.)
+  // Defaults; refreshMic() replaces them from computer.json (mic_threshold_db,
+  // mic_end_silence_ms) when the calibration tool has written values there.
+  // Re-read at the start of every turn, so a tweak applies to the very next
+  // question without restarting the shell or closing the panel.
+  property real speechThresholdDb: -50
+  property real endSilenceMs: 2200
+  // No speech heard at all for this long: give up and return to idle.
+  property real noSpeechTimeoutMs: 10000
   property bool heardSpeech: false
   property real silenceMs: 0
   property int loudStreak: 0
@@ -257,6 +269,7 @@ Item {
     window.visible = true
     refreshSettings()
     refreshGrants()
+    refreshMic()
     if (!activityProc.running) activityProc.running = true
     if (payload.say) say(String(payload.say))
     else if (payload.listen !== false) startListening()
@@ -309,6 +322,7 @@ Item {
     silenceMs = 0
     loudStreak = 0
     listenedMs = 0
+    refreshMic()
     phase = "listening"
     recProc.command = [binDir + "/record.sh", recFile, "60"]
     recProc.running = true
@@ -377,6 +391,27 @@ Item {
 
   function refreshGrants() {
     if (!grantProbe.running) grantProbe.running = true
+  }
+
+  function refreshMic() {
+    if (!micProc.running) micProc.running = true
+  }
+
+  Process {
+    id: micProc
+    command: ["bash", "-c",
+      "jq -r '[(.mic_threshold_db // \"\"), (.mic_end_silence_ms // \"\")] | @tsv' " +
+      "\"$HOME/.config/omarchy/computer.json\" 2>/dev/null"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var parts = String(text || "").trim().split("\t")
+        var thr = parseFloat(parts[0])
+        var sil = parseFloat(parts[1])
+        if (!isNaN(thr)) root.speechThresholdDb = Math.max(-70, Math.min(-20, thr))
+        if (!isNaN(sil)) root.endSilenceMs = Math.max(800, Math.min(5000, sil))
+      }
+    }
   }
 
   function resolveGrant(allowIt) {
@@ -471,10 +506,10 @@ Item {
         }
         root.loudStreak = 0
         root.silenceMs += 50
-        if (root.heardSpeech && root.silenceMs >= 1500) {
+        if (root.heardSpeech && root.silenceMs >= root.endSilenceMs) {
           console.log("computer: endpoint — silence after speech at", root.listenedMs, "ms")
           root.stopListening()
-        } else if (!root.heardSpeech && root.silenceMs >= 10000) {
+        } else if (!root.heardSpeech && root.silenceMs >= root.noSpeechTimeoutMs) {
           console.log("computer: endpoint — no speech heard, giving up")
           root.stopListening()
         }
