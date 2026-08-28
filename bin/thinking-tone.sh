@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Ambient "thinking" tone — a soft, evolving generative pad streamed live to
 # the audio sink while the agent works. One of four moods (aurora, nebula,
-# umbra, crystal) is chosen at random each time. Killed (SIGTERM) to stop,
-# with a quick volume fade-out so it does not cut abruptly into the reply.
+# umbra, crystal) is chosen at random each time. The script execs ffmpeg, so
+# the process the panel manages IS the audio — closing the panel stops it at
+# once, with no orphaned child left playing.
 #
 # Two courtesies: it plays NOTHING if other audio is already going (so it
 # never steps on music or a video), and it fades in gently. Volume is low;
@@ -31,37 +32,15 @@ case "$pick" in
   3) name="crystal"; lp=3000; rev="aecho=0.75:0.85:170|300|470:0.32|0.24|0.16"
      L="0.05*(0.8*(0.5+0.5*sin(2*PI*0.044*t+0.0))*sin(2*PI*87.3*t) + 0.4*(0.5+0.5*sin(2*PI*0.056*t+1.0))*sin(2*PI*174.6*t) + 0.2*(0.5+0.5*sin(2*PI*0.061*t+0.0))*sin(2*PI*261.6*t) + 0.13*(0.5+0.5*sin(2*PI*0.077*t+2.0))*sin(2*PI*393.0*t) + 0.11*(0.5+0.5*sin(2*PI*0.091*t+4.0))*sin(2*PI*523.0*t) + 0.09*(0.5+0.5*sin(2*PI*0.067*t+1.0))*sin(2*PI*626.0*t) + 0.07*(0.5+0.5*sin(2*PI*0.103*t+3.0))*sin(2*PI*784.0*t) + 0.05*(0.5+0.5*sin(2*PI*0.083*t+5.0))*sin(2*PI*933.0*t))"
      R="0.05*(0.8*(0.5+0.5*sin(2*PI*0.044*t+0.9))*sin(2*PI*87.89999999999999*t) + 0.4*(0.5+0.5*sin(2*PI*0.056*t+1.9))*sin(2*PI*175.2*t) + 0.2*(0.5+0.5*sin(2*PI*0.061*t+0.9))*sin(2*PI*262.20000000000005*t) + 0.13*(0.5+0.5*sin(2*PI*0.077*t+2.9))*sin(2*PI*394.2*t) + 0.11*(0.5+0.5*sin(2*PI*0.091*t+4.9))*sin(2*PI*524.2*t) + 0.09*(0.5+0.5*sin(2*PI*0.067*t+1.9))*sin(2*PI*627.8*t) + 0.07*(0.5+0.5*sin(2*PI*0.103*t+3.9))*sin(2*PI*785.8*t) + 0.05*(0.5+0.5*sin(2*PI*0.083*t+5.9))*sin(2*PI*935.4*t))" ;;
-  *) name="aurora" ;;
+  *) exec "$0" 0 ;;   # out-of-range pick: restart as aurora
 esac
 
-stream="computer-thinking-tone"
-ffmpeg -hide_banner -loglevel error -nostdin \
+# exec so THIS process becomes ffmpeg: when the panel closes it, the audio
+# stops immediately with it — no orphaned child that keeps playing (the panel
+# tears the process down without a catchable signal, so a trap-based fade
+# would never run anyway). Level is the ffmpeg volume filter; the stream
+# starts at unity (stream-restore memory was normalised to 100%).
+exec ffmpeg -hide_banner -loglevel error -nostdin \
   -f lavfi -i "aevalsrc=exprs=$L|$R:s=48000" \
   -af "lowpass=f=$lp,$rev,volume=$vol,afade=t=in:d=0.9" \
-  -f pulse -stream_name "$stream" default &
-ff=$!
-
-# Our sink-input index: the newest stream (nothing else plays, per the check).
-sid=""
-for _ in 1 2 3 4 5 6 7 8; do
-  sid=$(pactl list short sink-inputs 2>/dev/null | tail -1 | cut -f1)
-  [ -n "$sid" ] && break
-  sleep 0.1
-done
-# Force full stream volume. PipeWire's stream-restore remembers per-app volume,
-# and our fade-out (ramp to 0 then stop) would otherwise be recalled as 0% and
-# silence the next run. Level is set entirely by ffmpeg's volume filter, so the
-# stream itself always plays at unity.
-[ -n "$sid" ] && pactl set-sink-input-volume "$sid" 100% 2>/dev/null
-
-on_stop() {
-  # Quick fade-out (~0.35s) by ramping the stream volume, then stop.
-  if [ -n "$sid" ]; then
-    for v in 78 55 36 20 8 0; do pactl set-sink-input-volume "$sid" "${v}%" 2>/dev/null; sleep 0.06; done
-  fi
-  kill "$ff" 2>/dev/null
-  wait "$ff" 2>/dev/null
-  exit 0
-}
-trap on_stop TERM INT
-wait "$ff"
+  -f pulse -stream_name computer-thinking-tone default

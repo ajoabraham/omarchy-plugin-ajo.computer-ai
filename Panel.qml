@@ -320,17 +320,18 @@ Item {
     })
   }
 
-  function close() {
-    closingFromHost = true
-    window.visible = false
-    closingFromHost = false
-    opened = false
+  // Stop every running process and reset turn state. Called whenever the
+  // window goes invisible (see the window's onVisibleChanged), so closing
+  // mid-thinking actually kills the agent, the tone, and any speech instead
+  // of orphaning them.
+  function teardown() {
     expectedStop = true
     if (recProc.running) recProc.running = false
     if (transProc.running) transProc.running = false
     if (askProc.running) askProc.running = false
     if (speakProc.running) speakProc.running = false
     if (activityProc.running) activityProc.running = false
+    if (toneProc.running) toneProc.running = false
     speechTimer.stop()
     speechLevels = []
     speechIndex = -1
@@ -343,10 +344,24 @@ Item {
     lastActivity = null
     typing = false
     if (inputEdit) inputEdit.text = ""
-    if (toneProc.running) toneProc.running = false
+    grantResumePending = false
+  }
+
+  function close() {
+    closingFromHost = true
+    window.visible = false     // fires onVisibleChanged → teardown()
+    closingFromHost = false
+    opened = false
+    teardown()
   }
 
   function dismiss() {
+    // Stop the agent/tone/speech FIRST, while the Process objects are still
+    // alive to receive the signal — shell.hide() destroys the component, so
+    // tearing down afterwards (via onVisibleChanged) is too late and orphans
+    // the children.
+    opened = false
+    teardown()
     if (shell && typeof shell.hide === "function")
       shell.hide((manifest && manifest.id) || "ajo.computer-ai")
     else close()
@@ -847,7 +862,10 @@ Item {
     // User-initiated close (window button / compositor). Tell the shell so
     // its open-panel state stays consistent and the next summon works.
     onVisibleChanged: {
-      if (!visible && !root.closingFromHost && root.shell && typeof root.shell.hide === "function")
+      if (visible) return
+      root.opened = false
+      root.teardown()            // kill the agent / tone / speech on any close
+      if (!root.closingFromHost && root.shell && typeof root.shell.hide === "function")
         root.shell.hide((root.manifest && root.manifest.id) || "ajo.computer-ai")
     }
 
