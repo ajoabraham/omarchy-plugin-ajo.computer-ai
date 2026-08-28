@@ -59,6 +59,11 @@ Item {
   // conversation, so follow-ups keep their context.
   property string turnMode: "new"
 
+  // Type-to-ask: when true the panel shows a text field instead of listening;
+  // submitting skips record+transcribe and hands the text straight to the
+  // agent. Toggle with '/'.
+  property bool typing: false
+
   // --- what the agent is doing right now ---
 
   // Ctrl+I opens the activity drawer. Adapters that can watch their harness
@@ -256,8 +261,8 @@ Item {
       return agentLabel + " is working — Enter cancels, Ctrl+I for details"
     if (phase === "speaking") return "Speaking — Enter interrupts"
     if (error !== "") return error
-    if (response !== "") return "Press Enter to ask a follow-up"
-    return "Press Enter to speak"
+    if (response !== "") return "Press Enter to ask a follow-up · / to type"
+    return "Press Enter to speak · / to type"
   }
 
   function open(payloadJson) {
@@ -299,6 +304,8 @@ Item {
     error = ""
     activityModel.clear()
     lastActivity = null
+    typing = false
+    if (inputEdit) inputEdit.text = ""
   }
 
   function dismiss() {
@@ -334,6 +341,7 @@ Item {
   }
 
   function activate() {
+    if (typing) return
     if (phase === "listening") { stopListening(); return }
     if (phase === "transcribing" || phase === "thinking") { cancelTurn(); return }
     if (phase === "speaking") { stopSpeaking(); return }
@@ -348,6 +356,42 @@ Item {
     phase = "idle"
     error = ""
     refreshGrants()
+  }
+
+  // --- typing a message instead of speaking ---
+
+  function enterTyping() {
+    if (phase === "listening" || phase === "transcribing" || phase === "thinking") return
+    if (speakProc.running) speakProc.running = false   // stop the voice to type
+    typing = true
+    Qt.callLater(function() { inputEdit.forceActiveFocus() })
+  }
+
+  function cancelTyping() {
+    typing = false
+    inputEdit.text = ""
+    keyCatcher.forceActiveFocus()
+  }
+
+  // Submit typed text — the record→transcribe steps are skipped; from here it
+  // is exactly a spoken turn, so the typed text shows as the transcript quote.
+  function submitText(text) {
+    var t = String(text || "").replace(/^\s+|\s+$/g, "")
+    if (t === "") return
+    typing = false
+    inputEdit.text = ""
+    if (speakProc.running) speakProc.running = false
+    speechTimer.stop()
+    speechLevels = []
+    speechIndex = -1
+    expectedStop = false
+    transcript = t
+    response = ""
+    error = ""
+    phase = "thinking"
+    askProc.command = [binDir + "/ask.sh", t, turnMode]
+    askProc.running = true
+    keyCatcher.forceActiveFocus()
   }
 
   // Cut the voice off mid-sentence; speakProc.onExited lands us in idle.
@@ -762,6 +806,14 @@ Item {
           event.accepted = true
           return
         }
+        // '/' opens the text field, when a new turn could start.
+        if (event.key === Qt.Key_Slash && !root.typing
+            && root.phase !== "listening" && root.phase !== "transcribing"
+            && root.phase !== "thinking") {
+          root.enterTyping()
+          event.accepted = true
+          return
+        }
         if (root.pendingGrant === null) return
         if (event.key === Qt.Key_A) { root.resolveGrant(true); event.accepted = true }
         else if (event.key === Qt.Key_D) { root.resolveGrant(false); event.accepted = true }
@@ -1149,14 +1201,126 @@ Item {
           }
         }
 
+        // Status line — click it (when idle) to start typing, or press /.
         Text {
+          visible: !root.typing
           text: root.statusLine
           color: root.error !== "" && root.phase === "idle"
             ? Color.urgent
-            : Qt.alpha(Color.popups.text, 0.6)
+            : Qt.alpha(Color.popups.text, statusMouse.containsMouse ? 0.85 : 0.6)
           font.family: Style.font.family
           font.pixelSize: Style.font.bodySmall
           Layout.alignment: Qt.AlignHCenter
+          Behavior on color { ColorAnimation { duration: 120 } }
+
+          MouseArea {
+            id: statusMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            enabled: root.phase !== "listening" && root.phase !== "transcribing"
+                     && root.phase !== "thinking"
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: root.enterTyping()
+          }
+        }
+
+        // Type-to-ask field: appears in place of the status line, focused.
+        // A frosted card with an ember focus-glow; Enter sends, Shift+Enter
+        // adds a newline, Esc returns to voice. Submitting runs the same
+        // agent pipeline as a spoken turn.
+        Rectangle {
+          id: inputBox
+          visible: root.typing
+          Layout.fillWidth: true
+          Layout.topMargin: Style.space(2)
+          implicitHeight: Math.min(
+            Math.max(Style.space(46), inputEdit.implicitHeight + Style.space(20)),
+            Style.space(150))
+          radius: Style.cornerRadius
+          color: Qt.alpha(Color.popups.text, 0.05)
+          border.width: Math.max(1, Style.normalBorderWidth)
+          border.color: inputEdit.activeFocus ? Qt.alpha(root.ember, 0.7)
+                                              : Qt.alpha(root.rust, 0.4)
+          Behavior on border.color { ColorAnimation { duration: 160 } }
+          opacity: root.typing ? 1 : 0
+          Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+
+          RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: Style.space(14)
+            anchors.rightMargin: Style.space(12)
+            anchors.topMargin: Style.space(10)
+            anchors.bottomMargin: Style.space(10)
+            spacing: Style.space(10)
+
+            Text {
+              text: "›"
+              color: root.ember
+              font.family: Style.font.family
+              font.pixelSize: Style.font.heading
+              font.bold: true
+              Layout.alignment: Qt.AlignTop
+            }
+
+            Flickable {
+              Layout.fillWidth: true
+              Layout.fillHeight: true
+              contentWidth: width
+              contentHeight: inputEdit.implicitHeight
+              clip: true
+              boundsBehavior: Flickable.StopAtBounds
+              // Keep the caret in view as the message grows.
+              onContentHeightChanged: contentY = Math.max(0, contentHeight - height)
+
+              TextEdit {
+                id: inputEdit
+                width: parent.width
+                wrapMode: TextEdit.Wrap
+                textFormat: TextEdit.PlainText
+                color: Color.popups.text
+                font.family: Style.font.family
+                font.pixelSize: Style.font.subtitle
+                selectByMouse: true
+                selectionColor: Qt.alpha(root.ember, 0.35)
+                cursorDelegate: Rectangle {
+                  width: Math.max(1, Style.space(2)); color: root.ember
+                  Behavior on opacity { NumberAnimation { duration: 400 } }
+                  SequentialAnimation on opacity {
+                    running: inputEdit.activeFocus; loops: Animation.Infinite
+                    NumberAnimation { to: 0; duration: 480 }
+                    NumberAnimation { to: 1; duration: 480 }
+                  }
+                }
+
+                Keys.onEscapePressed: root.cancelTyping()
+                Keys.onReturnPressed: function(e) {
+                  if (e.modifiers & Qt.ShiftModifier) { e.accepted = false }
+                  else { root.submitText(inputEdit.text); e.accepted = true }
+                }
+                Keys.onEnterPressed: function(e) {
+                  if (e.modifiers & Qt.ShiftModifier) { e.accepted = false }
+                  else { root.submitText(inputEdit.text); e.accepted = true }
+                }
+
+                Text {
+                  anchors.fill: parent
+                  visible: inputEdit.text.length === 0
+                  text: "Type your message…"
+                  color: Qt.alpha(Color.popups.text, 0.32)
+                  font: inputEdit.font
+                  wrapMode: Text.Wrap
+                }
+              }
+            }
+
+            Text {
+              text: "↵ send · esc"
+              color: Qt.alpha(Color.popups.text, 0.3)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              Layout.alignment: Qt.AlignBottom
+            }
+          }
         }
 
         // Permission-request card: the human gate for privilege escalation.
