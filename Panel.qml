@@ -212,6 +212,24 @@ Item {
   // Free-running phase for bar wobble / chase / idle drift.
   property real animPhase: 0
 
+  // Idle cycles slowly through several calm swarm moods so the resting orb
+  // keeps evolving instead of sitting on one shape. The swarm cross-fades
+  // toward whichever variant is current, so switching is a smooth morph.
+  readonly property var idleVariants: ["cocoon", "halo", "lantern", "drift", "coil"]
+  property string idleVariant: "cocoon"
+  property int idleIndex: 0
+
+  Timer {
+    id: idleTimer
+    interval: 14000            // ~14s per mood — a slow, unhurried drift
+    repeat: true
+    running: root.opened && root.phase === "idle"
+    onTriggered: {
+      root.idleIndex = (root.idleIndex + 1) % root.idleVariants.length
+      root.idleVariant = root.idleVariants[root.idleIndex]
+    }
+  }
+
   function levelFromDb(db) {
     if (!isFinite(db)) return 0
     return Math.max(0, Math.min(1, (db + 52) / 38))
@@ -961,14 +979,32 @@ Item {
                         QA: 1.65, QF: 3.47, SP: 38.62, TH: 9.63,
                         ORB: 47.63, YS: 7.34, PD: 10.77, PSP: 2.73,
                         WV: 7.21, WSP: 3.79, DOF: 5.98, RF: 3.04, DPH: 3.18,
-                        DENS: 235, CX: 224, CY: 158, ZOOM: 1.62 }
+                        DENS: 235, CX: 224, CY: 158, ZOOM: 1.62 },
+              // Calm idle moods — variations on cocoon that the idle state
+              // slowly morphs between (see root.idleVariants / idleTimer).
+              halo:   { AMP: 3.4, WIND: 22, VS: 9, VO: 12, QA: 2, QF: 3,
+                        SP: 60, TH: 11, ORB: 34, YS: 40, PD: 7, PSP: 2.4,
+                        WV: 6, WSP: 2, DOF: 4, RF: 6, DPH: 1.5,
+                        DENS: 170, CX: 200, CY: -40, ZOOM: 1.4 },
+              lantern:{ AMP: 2.0, WIND: 11, VS: 6, VO: 13, QA: 2.2, QF: 2.8,
+                        SP: 80, TH: 16, ORB: 18, YS: 60, PD: 10, PSP: 1.6,
+                        WV: 10, WSP: 1.8, DOF: 3.5, RF: 3.5, DPH: 1.8,
+                        DENS: 200, CX: 200, CY: -130, ZOOM: 1.5 },
+              drift:  { AMP: 5.2, WIND: 30, VS: 8, VO: 13, QA: 1.8, QF: 3.2,
+                        SP: 48, TH: 10, ORB: 26, YS: 30, PD: 6, PSP: 2,
+                        WV: 4, WSP: 2.4, DOF: 5, RF: 8, DPH: 2.5,
+                        DENS: 160, CX: 200, CY: 10, ZOOM: 1.5 },
+              coil:   { AMP: 4.0, WIND: 18, VS: 7, VO: 13, QA: 2, QF: 3.4,
+                        SP: 55, TH: 12, ORB: 44, YS: 22, PD: 8, PSP: 2.8,
+                        WV: 7, WSP: 2, DOF: 4, RF: 5, DPH: 3,
+                        DENS: 180, CX: 210, CY: 60, ZOOM: 1.55 }
             })
             property var cur: null
             readonly property int points: 1200
 
             function targetPreset() {
               if (root.phase === "thinking" || root.phase === "transcribing") return presets.storm
-              if (root.phase === "idle") return presets.cocoon
+              if (root.phase === "idle") return presets[root.idleVariant] || presets.cocoon
               return presets.spark
             }
             function mix(a, b, f) { return a + (b - a) * f }
