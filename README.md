@@ -18,6 +18,12 @@ control media) within a user-approved permission policy.
   stays uncluttered.
 - **Pipeline**: ffmpeg capture with voice-activity endpointing → Voxtype
   (whisper) transcription → agent harness → Kokoro/Piper TTS.
+- **Mic calibration by voice**: say "help me tune my microphone" and the
+  agent walks it out loud. It measures the audio of the sentence you *just
+  spoke* — no "speak now" cue, every turn is a sample — reports the level
+  (too hot, too quiet, good) and adjusts mic gain and the endpointing
+  thresholds. Threshold and silence-window changes take effect on your next
+  sentence, without restarting the shell or closing the panel.
 - **Agents**: one adapter script per harness in `agents/` (Claude Code, Grok
   CLI, ChatGPT via Codex CLI ship in-tree). The panel's Assistant dropdown
   discovers them automatically; see `agents/README.md` for the contract.
