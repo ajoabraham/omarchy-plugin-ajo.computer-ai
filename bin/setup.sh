@@ -37,6 +37,11 @@ if command -v voxtype >/dev/null 2>&1; then ok "voxtype (speech-to-text)"
 else bad "voxtype — install with: omarchy voxtype install"; missing=1; fi
 
 echo
+echo "Optional — email (draft/send from your Gmail):"
+command -v himalaya   >/dev/null 2>&1 && ok "himalaya (email CLI)" || note "himalaya — for email: pacman -S himalaya"
+command -v secret-tool >/dev/null 2>&1 && ok "secret-tool (keyring)" || note "secret-tool — for email credentials: pacman -S libsecret"
+
+echo
 echo "Agent harnesses (need at least one):"
 export PATH="$HOME/.local/share/mise/shims:$HOME/.grok/bin:$HOME/.local/bin:$PATH"
 found_agent=0

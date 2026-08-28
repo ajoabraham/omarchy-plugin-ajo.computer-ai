@@ -31,6 +31,12 @@ control media) within a user-approved permission policy.
   window; "start a new conversation" resets on demand.
 - **Memory**: persistent markdown memory in `~/.local/share/computer-ai/memory/`
   (index inlined into every turn).
+- **Email** (optional): with the [himalaya](https://github.com/pimalaya/himalaya)
+  CLI, the assistant can **read**, **draft**, or **send** email from one or
+  more of your accounts. Sending always opens the message in an editor for you to review,
+  edit, and approve with a keystroke — it never sends on its own. Attachments
+  are supported. First use opens a setup window for your address and a Gmail
+  App Password (stored in gnome-keyring, never spoken). Behind a one-time grant.
 - **Local web fetch** (optional): `bin/localfetch.sh` retrieves a page from
   this machine over your own connection, rather than through the harness
   vendor's servers — so sites resolve and geo-vary as they do for you, and
@@ -114,6 +120,47 @@ commands. Know the boundaries:
 - Audio is processed locally (Voxtype/whisper STT, Piper/Kokoro TTS);
   transcribed text goes only to the agent CLI you selected.
 
+## Email
+
+`bin/mail.sh` lets the assistant write email through the
+[himalaya](https://github.com/pimalaya/himalaya) CLI (`pacman -S himalaya`),
+across one or more accounts:
+
+- **Read** ("what's in my inbox", "read the latest from Alice", "any email
+  about the invoice") — lists, reads, and searches your mail. Reading leaves
+  messages unread, and their content enters the conversation, so the assistant
+  summarises rather than reciting long mail.
+- **Draft** ("draft an email to …") — saved to your Drafts; you finish it in
+  Gmail. Nothing is sent by the plugin.
+- **Send** ("send an email to …") — opens the composed message in an editor
+  (`$EDITOR`, e.g. nvim), with any attachments listed. You edit
+  recipients/subject/body, save, and confirm; only then does himalaya send it.
+  Every send is a human keystroke in that window, so a misheard command cannot
+  mail anyone.
+- **Multiple accounts** — say "send from work"; with more than one account the
+  assistant asks which to use. Attach files with your voice request too.
+
+The **first time** you ask for email, the assistant approves the
+`Bash(.../mail.sh:*)` grant (a panel card) and opens a **setup window** — a
+terminal that asks for a Gmail address and a Gmail App Password (create one at
+https://myaccount.google.com/apppasswords; it needs 2-Step Verification). The
+password goes into **gnome-keyring** via `secret-tool`; himalaya reads it from
+there, so no secret is written to disk. The window verifies the sign-in and
+writes the account into `~/.config/himalaya/config.toml`. Run setup again to
+add more accounts. Requires `himalaya` and `secret-tool` (`libsecret`).
+
+The password is entered by keyboard in that window, never spoken — voice would
+be transcribed into the logs. Messages are built with Python's `email` library
+with header values stripped of control characters, so a dictated subject or
+recipient cannot inject extra headers.
+
+To set it up manually instead:
+
+```bash
+himalaya configure    # himalaya's own account wizard, or:
+~/.config/omarchy/plugins/ajo.computer-ai/bin/mail.sh configure
+```
+
 ## Uninstall
 
 ```bash
@@ -122,7 +169,9 @@ omarchy plugin remove ajo.computer-ai
 
 removes the plugin cleanly. Optional leftovers you may also delete:
 `~/.local/share/computer-ai/` (voices, memory, permission policy, state),
-`~/.config/omarchy/computer.json`, and the two Hyprland lines that
+`~/.config/omarchy/computer.json`, `~/.config/himalaya/config.toml` and the
+keyring entries under service `computer-ai-mail` (`secret-tool clear service
+computer-ai-mail`) if you set up email, and the two Hyprland lines that
 `setup.sh --wire` added.
 
 ## Controls
