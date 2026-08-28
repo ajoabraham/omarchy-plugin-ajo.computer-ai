@@ -17,8 +17,8 @@ from pathlib import Path
 import soundfile as sf
 from kokoro_onnx import Kokoro
 
-KOKORO_DIR = Path.home() / ".local/share/computer/kokoro"
-SOCK_PATH = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "computer-kokoro.sock"
+KOKORO_DIR = Path.home() / ".local/share/computer-ai/kokoro"
+SOCK_PATH = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "computer-ai-kokoro.sock"
 IDLE_EXIT_SECONDS = 600
 
 last_activity = time.monotonic()

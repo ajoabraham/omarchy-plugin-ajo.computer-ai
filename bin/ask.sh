@@ -17,12 +17,16 @@
 #
 # Permission policy lives in the settings file below; the panel's grant flow
 # (request-grant.sh / apply-grant.sh) appends to it with user approval.
+#
+# Adapters that can report progress append JSONL activity lines to
+# COMPUTER_ACTIVITY_FILE while they work; the panel tails it live (Ctrl+I).
+# It is truncated here, so the file always holds exactly this turn.
 set -u
 plugin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cfg="$HOME/.config/omarchy/computer.json"
-mem_dir="$HOME/.local/share/computer/memory"
-state_dir="$HOME/.local/share/computer/state"
-settings_file="$HOME/.local/share/computer/claude-settings.json"
+mem_dir="$HOME/.local/share/computer-ai/memory"
+state_dir="$HOME/.local/share/computer-ai/state"
+settings_file="$HOME/.local/share/computer-ai/claude-settings.json"
 export PATH="$HOME/.local/share/mise/shims:$HOME/.grok/bin:$HOME/.local/bin:$PATH"
 cd "$HOME"
 
@@ -34,6 +38,9 @@ mkdir -p "$mem_dir" "$state_dir"
 if [ ! -f "$settings_file" ]; then
   sed "s|__PLUGIN_DIR__|$plugin_dir|g" "$plugin_dir/defaults/permissions.json" > "$settings_file"
 fi
+activity_file="$state_dir/activity.jsonl"
+: > "$activity_file"
+
 memory=$(head -c 4000 "$mem_dir/MEMORY.md" 2>/dev/null)
 now=$(date '+%A, %B %d %Y, %H:%M')
 
@@ -73,9 +80,13 @@ $plugin_dir/bin/request-grant.sh '<rule>' '<short reason>'
 with a claude-code permission rule (e.g. 'Bash(playerctl:*)' or
 'Read(~/Documents/**)'), then tell the user a permission request is waiting in
 the panel for their approval; once approved it works from the next question.
-Request the narrowest rule that does the job. Never request broad rules like
-'Bash(*)', sudo, or writes outside your own directories. If a request sounds
-too garbled to act on safely, ask for it again rather than guessing.
+Request the narrowest rule that does the job. You are also confined to $HOME as
+your working directory, whatever the tool allowlist says: to reach somewhere
+else (a runtime or state directory under /run, say), request that path as a
+'Dir(/absolute/path)' rule the same way. Never request broad rules like
+'Bash(*)', 'Dir(/)', sudo, or writes outside your own directories. If a
+request sounds too garbled to act on safely, ask for it again rather than
+guessing.
 
 NEW CONVERSATION: If the user asks to start a new or fresh conversation
 (clear the context), run $plugin_dir/bin/new-conversation.sh and confirm;
@@ -132,6 +143,7 @@ export COMPUTER_SETTINGS_FILE="$settings_file"
 export COMPUTER_CONV_ID="$conv_id"
 export COMPUTER_CONV_STARTED="$conv_started"
 export COMPUTER_STATE_DIR="$state_dir"
+export COMPUTER_ACTIVITY_FILE="$activity_file"
 
 if "$adapter" "$1"; then
   printf '%s %s %s 1\n' "$conv_id" "$now_epoch" "$agent" > "$conv_file"

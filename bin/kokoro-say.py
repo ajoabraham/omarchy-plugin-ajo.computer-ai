@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Synthesize speech with Kokoro TTS: kokoro-say.py <voice> <out.wav> <text>.
 
-Runs inside the venv at ~/.local/share/computer/kokoro/venv (speak.sh invokes
+Runs inside the venv at ~/.local/share/computer-ai/kokoro/venv (speak.sh invokes
 it with that interpreter). Model files live next to the venv.
 """
 import sys
@@ -10,7 +10,7 @@ from pathlib import Path
 import soundfile as sf
 from kokoro_onnx import Kokoro
 
-KOKORO_DIR = Path.home() / ".local/share/computer/kokoro"
+KOKORO_DIR = Path.home() / ".local/share/computer-ai/kokoro"
 
 
 def main() -> int:

@@ -12,10 +12,10 @@
 # Long-running children are reaped with `wait` and killed by the TERM trap,
 # so Esc/Enter silences the voice mid-word.
 set -u
-dir="$HOME/.local/share/computer"
+dir="$HOME/.local/share/computer-ai"
 cfg="$HOME/.config/omarchy/computer.json"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-sock="${XDG_RUNTIME_DIR:-/tmp}/computer-kokoro.sock"
+sock="${XDG_RUNTIME_DIR:-/tmp}/computer-ai-kokoro.sock"
 py="$dir/kokoro/venv/bin/python"
 
 tmpdir=$(mktemp -d)

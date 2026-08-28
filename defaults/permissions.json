@@ -18,10 +18,11 @@
       "Bash(__PLUGIN_DIR__/bin/new-conversation.sh:*)",
       "WebFetch",
       "WebSearch",
-      "Read(~/.local/share/computer/memory/**)",
-      "Write(~/.local/share/computer/memory/**)",
-      "Edit(~/.local/share/computer/memory/**)",
+      "Read(~/.local/share/computer-ai/memory/**)",
+      "Write(~/.local/share/computer-ai/memory/**)",
+      "Edit(~/.local/share/computer-ai/memory/**)",
       "mcp__claude-in-chrome"
-    ]
+    ],
+    "additionalDirectories": []
   }
 }

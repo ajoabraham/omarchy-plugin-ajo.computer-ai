@@ -6,7 +6,7 @@
 set -eu
 rule="$1"
 reason="${2:-}"
-state="$HOME/.local/share/computer/state"
+state="$HOME/.local/share/computer-ai/state"
 mkdir -p "$state"
 jq -cn --arg rule "$rule" --arg reason "$reason" '{rule: $rule, reason: $reason}' \
   >> "$state/pending-grants.jsonl"

@@ -8,7 +8,7 @@
 set -u
 out="$1"
 max="${2:-60}"
-log_dir="$HOME/.local/share/computer/state"
+log_dir="$HOME/.local/share/computer-ai/state"
 mkdir -p "$log_dir"
 exec ffmpeg -hide_banner -nostats -loglevel error -f pulse -i default \
   -af "aresample=16000,asetnsamples=800,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-:direct=1" \

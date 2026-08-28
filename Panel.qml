@@ -10,10 +10,12 @@ import qs.Ui
 // pipeline of processes —
 // record (ffmpeg) → transcribe (voxtype) → ask (claude/grok) → speak (tts).
 // Its centerpiece is an orb of radial bars driven by real audio levels:
-// live mic RMS while listening, the reply audio's RMS timeline while
-// speaking, and a rotating chase while transcribing/thinking.
-// Keys (Enter/Space to speak, Esc to close) only act while the window has
-// keyboard focus, like any other window.
+// live mic RMS while listening and the reply audio's RMS timeline while
+// speaking. While the agent works the bars retract and the gyre takes over
+// — sweeping arcs, an elapsed clock, and the newest step the agent took —
+// because a turn can run for minutes and a still orb reads as a hang.
+// Keys (Enter/Space to speak, Ctrl+I for the activity log, Esc to close)
+// only act while the window has keyboard focus, like any other window.
 // Summoned by hotkey via `omarchy-shell shell summon ajo.computer-ai
 // '{"listen": true}'`; payload {"say": "text"} speaks arbitrary text.
 Item {
@@ -23,13 +25,22 @@ Item {
   property var manifest: null
 
   readonly property string home: Quickshell.env("HOME")
-  readonly property string binDir: home + "/.config/omarchy/plugins/ajo.computer-ai/bin"
-  readonly property string recFile: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/computer-question.wav"
+  // The shell stamps the plugin's own directory onto its manifest, so the
+  // panel locates its scripts wherever it was actually installed rather than
+  // assuming the canonical path — a dev symlink under another name included.
+  // The literal stays as a fallback in case a shell build doesn't stamp it.
+  readonly property string pluginDir: (manifest && manifest.__sourceDir)
+    ? String(manifest.__sourceDir).replace(/\/+$/, "")
+    : home + "/.config/omarchy/plugins/ajo.computer-ai"
+  readonly property string binDir: pluginDir + "/bin"
+  readonly property string recFile: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/computer-ai-question.wav"
 
   property bool opened: false
   property bool closingFromHost: false
   // idle | listening | transcribing | thinking | speaking
   property string phase: "idle"
+  // The agent is off doing something and there is nothing to hear.
+  readonly property bool busy: phase === "thinking" || phase === "transcribing"
   property string transcript: ""
   property string response: ""
   property string error: ""
@@ -47,6 +58,101 @@ Item {
   // grace window), "follow" for later turns — they resume the same agent
   // conversation, so follow-ups keep their context.
   property string turnMode: "new"
+
+  // --- what the agent is doing right now ---
+
+  // Ctrl+I opens the activity drawer. Adapters that can watch their harness
+  // append a line per step to COMPUTER_ACTIVITY_FILE (see agents/README);
+  // the panel tails it, so a long run shows its work instead of nothing.
+  property bool activityOpen: false
+  // Newest non-trivial step, shown under the orb.
+  property var lastActivity: null
+  // Wall-clock seconds this turn has been working — the one number that
+  // separates "still going" from "stuck".
+  property int elapsedS: 0
+  property double turnStartedMs: 0
+
+  // Token accounting, all of it reported by the harness rather than
+  // guessed here. `ctx` is what the latest API call actually carried — it
+  // grows as tool results pile up, so it doubles as a sign of life. Output
+  // tokens are only trustworthy from the end-of-turn summary: the
+  // per-message usage in the stream is a partial snapshot and does not sum
+  // to the total, so accumulating it would show a confidently wrong number.
+  property int turnCtx: 0
+  property int ctxWindow: 0       // learned from a completed turn, then kept
+  property var turnSummary: null
+  property var limits: null       // account usage windows, if the plan reports them
+
+  function fmtTokens(n) {
+    var v = Number(n) || 0
+    if (v < 1000) return String(v)
+    if (v < 1000000) return (v / 1000).toFixed(v < 10000 ? 1 : 0) + "k"
+    var m = v / 1000000
+    // Trailing zeros make a round window read as false precision: 1M, not 1.00M.
+    return (m >= 10 ? m.toFixed(0) : m.toFixed(2).replace(/\.?0+$/, "")) + "M"
+  }
+
+  function pctLabel(frac) {
+    var v = Math.round(100 * (Number(frac) || 0))
+    return (v < 1 && frac > 0 ? "<1" : String(v)) + "%"
+  }
+
+  // The drawer's status strip. Only chips whose numbers actually arrived
+  // are built, so nothing shows a placeholder zero.
+  readonly property var statChips: {
+    var out = []
+    if (turnCtx > 0) {
+      out.push({ k: "ctx", v: fmtTokens(turnCtx)
+        + (ctxWindow > 0 ? " / " + fmtTokens(ctxWindow)
+                           + "  " + Math.round(100 * turnCtx / ctxWindow) + "%" : ""),
+        warn: false })
+    }
+    var sum = turnSummary
+    if (sum) {
+      if (Number(sum.tout) > 0) out.push({ k: "out", v: fmtTokens(sum.tout), warn: false })
+      if (Number(sum.cread) > 0) out.push({ k: "cached", v: fmtTokens(sum.cread), warn: false })
+      if (Number(sum.cost) > 0) out.push({ k: "cost", v: "$" + Number(sum.cost).toFixed(3), warn: false })
+      if (String(sum.session || "") !== "") out.push({ k: "session", v: String(sum.session), warn: false })
+    }
+    if (limits) {
+      if (limits.five_hour !== null && limits.five_hour !== undefined)
+        out.push({ k: "5h", v: pctLabel(limits.five_hour), warn: Number(limits.five_hour) >= 0.8 })
+      if (limits.seven_day !== null && limits.seven_day !== undefined)
+        out.push({ k: "7d", v: pctLabel(limits.seven_day), warn: Number(limits.seven_day) >= 0.8 })
+      // The reset time only matters once you are close enough to care.
+      if (Number(limits.five_hour) >= 0.5 && Number(limits.resets) > 0)
+        out.push({ k: "resets", warn: false,
+          v: Qt.formatTime(new Date(Number(limits.resets) * 1000), "HH:mm") })
+    }
+    return out
+  }
+
+  function elapsedLabel() {
+    var m = Math.floor(elapsedS / 60)
+    var sec = elapsedS % 60
+    return m + ":" + (sec < 10 ? "0" : "") + sec
+  }
+
+  onBusyChanged: {
+    if (!busy) return
+    turnStartedMs = Date.now()
+    elapsedS = 0
+    activityModel.clear()
+    lastActivity = null
+    turnCtx = 0
+    turnSummary = null
+  }
+
+  Timer {
+    interval: 1000
+    repeat: true
+    running: root.busy
+    onTriggered: root.elapsedS = Math.floor((Date.now() - root.turnStartedMs) / 1000)
+  }
+
+  // The orb's rust ramp, shared by the bars, the swarm and the gyre.
+  readonly property color rust: Qt.rgba(183 / 255, 65 / 255, 14 / 255, 1)
+  readonly property color ember: Qt.rgba(245 / 255, 177 / 255, 66 / 255, 1)
 
   // --- audio levels driving the orb ---
 
@@ -99,7 +205,9 @@ Item {
     running: root.opened
     onTriggered: {
       root.animPhase = (root.animPhase + 0.16) % (Math.PI * 2000)
-      if (window.visible) swarm.requestPaint()
+      if (!window.visible) return
+      swarm.requestPaint()
+      if (gyre.visible) gyre.requestPaint()
     }
   }
 
@@ -132,7 +240,8 @@ Item {
       ? "Listening… pause when finished (Enter sends now)"
       : "Listening… speak whenever you're ready"
     if (phase === "transcribing") return "Transcribing… Enter cancels"
-    if (phase === "thinking") return "Asking " + agentLabel + "… Enter cancels"
+    if (phase === "thinking")
+      return agentLabel + " is working — Enter cancels, Ctrl+I for details"
     if (phase === "speaking") return "Speaking — Enter interrupts"
     if (error !== "") return error
     if (response !== "") return "Press Enter to ask a follow-up"
@@ -148,6 +257,7 @@ Item {
     window.visible = true
     refreshSettings()
     refreshGrants()
+    if (!activityProc.running) activityProc.running = true
     if (payload.say) say(String(payload.say))
     else if (payload.listen !== false) startListening()
     Qt.callLater(function() {
@@ -165,6 +275,7 @@ Item {
     if (transProc.running) transProc.running = false
     if (askProc.running) askProc.running = false
     if (speakProc.running) speakProc.running = false
+    if (activityProc.running) activityProc.running = false
     speechTimer.stop()
     speechLevels = []
     speechIndex = -1
@@ -173,6 +284,8 @@ Item {
     transcript = ""
     response = ""
     error = ""
+    activityModel.clear()
+    lastActivity = null
   }
 
   function dismiss() {
@@ -220,6 +333,7 @@ Item {
     if (askProc.running) askProc.running = false
     phase = "idle"
     error = ""
+    refreshGrants()
   }
 
   // Cut the voice off mid-sentence; speakProc.onExited lands us in idle.
@@ -249,10 +363,10 @@ Item {
   function refreshSettings() {
     if (settingsProc.running) return
     probedAgent = agent
-    var agentsDir = home + "/.config/omarchy/plugins/ajo.computer-ai/agents"
+    var agentsDir = root.pluginDir + "/agents"
     settingsProc.command = ["bash", "-c",
-      "cd \"$HOME/.local/share/computer/voices\" 2>/dev/null && ls -1 *.onnx 2>/dev/null | sed 's/\\.onnx$//'; " +
-      "[ -f \"$HOME/.local/share/computer/kokoro/kokoro-v1.0.onnx\" ] && printf 'kokoro:%s\\n' af_heart af_bella af_sky am_michael am_puck bf_emma bf_isabella bm_george bm_fable; " +
+      "cd \"$HOME/.local/share/computer-ai/voices\" 2>/dev/null && ls -1 *.onnx 2>/dev/null | sed 's/\\.onnx$//'; " +
+      "[ -f \"$HOME/.local/share/computer-ai/kokoro/kokoro-v1.0.onnx\" ] && printf 'kokoro:%s\\n' af_heart af_bella af_sky am_michael am_puck bf_emma bf_isabella bm_george bm_fable; " +
       "for f in \"" + agentsDir + "/\"*.sh; do [ -x \"$f\" ] && printf 'agentopt %s\\n' \"$(basename \"$f\" .sh)\"; done; " +
       "\"" + agentsDir + "/" + agent + ".sh\" --list-models 2>/dev/null | sed 's/^/modelopt /'; " +
       "jq -r '.model_" + agent + " // empty' \"$HOME/.config/omarchy/computer.json\" 2>/dev/null | sed 's/^/curmodel /'; " +
@@ -274,7 +388,7 @@ Item {
 
   Process {
     id: grantProbe
-    command: ["bash", "-c", "head -n1 \"$HOME/.local/share/computer/state/pending-grants.jsonl\" 2>/dev/null"]
+    command: ["bash", "-c", "head -n1 \"$HOME/.local/share/computer-ai/state/pending-grants.jsonl\" 2>/dev/null"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -291,6 +405,48 @@ Item {
   Process {
     id: grantAct
     onExited: root.refreshGrants()
+  }
+
+  // --- live activity ---
+
+  ListModel { id: activityModel }
+
+  // -n 0 starts at the end of the file, so opening the panel never replays
+  // a stale turn; ask.sh truncates the log before each turn and -F picks
+  // that up. Adapters that can't stream simply never write to it.
+  Process {
+    id: activityProc
+    command: ["bash", "-c",
+      "tail -n 0 -F -s 0.2 \"$HOME/.local/share/computer-ai/state/activity.jsonl\" 2>/dev/null"]
+    stdout: SplitParser {
+      onRead: function(line) { root.pushActivity(line) }
+    }
+  }
+
+  function pushActivity(line) {
+    var ev = null
+    try { ev = JSON.parse(String(line)) } catch (e) { return }
+    if (!ev || !ev.kind) return
+    // usage/limits/summary are state, not steps — they update the numbers
+    // without adding a row to scroll past.
+    if (ev.kind === "usage") { root.turnCtx = Number(ev.ctx) || root.turnCtx; return }
+    if (ev.kind === "limits") { root.limits = ev; return }
+    if (ev.kind === "summary") {
+      root.turnSummary = ev
+      if (Number(ev.window) > 0) root.ctxWindow = Number(ev.window)
+      return
+    }
+    activityModel.append({
+      kind: String(ev.kind),
+      label: String(ev.label || ""),
+      detail: String(ev.detail || "")
+    })
+    // Scrollback, not state — keep the drawer's memory flat on long runs.
+    while (activityModel.count > 300) activityModel.remove(0)
+    if (ev.kind !== "meta") root.lastActivity = ev
+    // Every tool call kicks the orb, so real progress is visible from
+    // across the room without reading a word.
+    if (ev.kind === "tool" && window.visible) gyre.ping()
   }
 
   // --- pipeline: record → transcribe → ask → speak ---
@@ -367,11 +523,12 @@ Item {
       }
     }
     onExited: function(exitCode) {
-      root.refreshGrants()
-      if (root.expectedStop || !root.opened) return
+      if (root.expectedStop || !root.opened) { root.refreshGrants(); return }
       if (exitCode !== 0 || root.response === "") {
         root.error = root.agentLabel + " didn't answer — try again"
         root.phase = "idle"
+        // Nothing will be spoken, so there is nothing to wait for.
+        root.refreshGrants()
         return
       }
       root.turnMode = "follow"
@@ -419,6 +576,10 @@ Item {
       root.speechLevels = []
       if (!root.opened) return
       if (root.phase === "speaking") root.phase = "idle"
+      // Ask, then show: the agent explains the request out loud and the
+      // card lands as it finishes — including when you cut it off with
+      // Enter, which is still an answer to the question.
+      root.refreshGrants()
     }
   }
 
@@ -527,22 +688,22 @@ Item {
     // rest behind it.
     color: Qt.alpha(Color.popups.background, 0.84)
     implicitWidth: Style.space(620)
-    // Starts short and grows with content (grant card, response, settings);
-    // the capped regions inside keep this bounded, so the orb always fits.
-    // Height is pushed imperatively from syncHeight(): compositor configure
-    // events overwrite the property and would sever a declarative binding.
-    implicitHeight: content.implicitHeight + Style.space(48)
 
-    function syncHeight() {
-      var target = Math.round(content.implicitHeight + Style.space(48))
-      if (Math.abs(height - target) > 2) height = target
-    }
-    // Growing minimumSize is what actually resizes the mapped window: the
-    // compositor enforces client minimums on floating windows, while plain
-    // height writes after map are ignored.
-    minimumSize: Qt.size(Style.space(440),
-      Math.max(Style.space(380), content.implicitHeight + Style.space(48)))
-    maximumSize: Qt.size(Style.space(980), Style.space(1000))
+    // The panel is sized by what is in it: opening the activity drawer, the
+    // settings or a grant card makes it taller, closing them makes it short
+    // again. Only the compositor can resize a mapped floating window — a
+    // plain `height` write after map is ignored — and it does that by
+    // enforcing the client's min/max. So *both* bounds track the content:
+    // a growing minimum alone can push the window open but never pull it
+    // back. The capped regions inside keep the total bounded, and the floor
+    // keeps the orb from ever being clipped.
+    readonly property int fitHeight: Math.max(Style.space(380),
+      Math.min(Style.space(1000), Math.round(content.implicitHeight + Style.space(48))))
+
+    implicitHeight: fitHeight
+    // Width stays adjustable; only height is pinned to the content.
+    minimumSize: Qt.size(Style.space(440), fitHeight)
+    maximumSize: Qt.size(Style.space(980), fitHeight)
 
     // User-initiated close (window button / compositor). Tell the shell so
     // its open-panel state stays consistent and the next summon works.
@@ -561,6 +722,11 @@ Item {
       Keys.onEnterPressed: root.activate()
       Keys.onSpacePressed: root.activate()
       Keys.onPressed: function(event) {
+        if (event.key === Qt.Key_I && (event.modifiers & Qt.ControlModifier)) {
+          root.activityOpen = !root.activityOpen
+          event.accepted = true
+          return
+        }
         if (root.pendingGrant === null) return
         if (event.key === Qt.Key_A) { root.resolveGrant(true); event.accepted = true }
         else if (event.key === Qt.Key_D) { root.resolveGrant(false); event.accepted = true }
@@ -581,8 +747,6 @@ Item {
         }
         spacing: Style.space(16)
 
-        onImplicitHeightChanged: Qt.callLater(window.syncHeight)
-
         // The orb: a thin ring with radial bars growing outward from it,
         // a soft halo, and a core that swells with the audio level.
         Item {
@@ -602,15 +766,14 @@ Item {
             (65 + (177 - 65) * level) / 255,
             (14 + (66 - 14) * level) / 255, 1)
 
+          // The bars are the voice — mic level in, speech level out. When
+          // there is no voice they idle, and while the agent works they
+          // retract entirely and hand the ring to the gyre.
           function barHeight(i) {
             var p = root.phase
             if (p === "listening" || p === "speaking") {
               var wob = 0.4 + 0.6 * Math.abs(Math.sin(i * 2.399 + root.animPhase * (p === "speaking" ? 2.4 : 1.7)))
               return minBar + maxBar * level * wob
-            }
-            if (p === "transcribing" || p === "thinking") {
-              var crest = Math.cos((i / barCount) * Math.PI * 2 - root.animPhase)
-              return minBar + maxBar * 0.7 * Math.pow(Math.max(0, crest), 3)
             }
             return minBar + maxBar * 0.07 * (1 + Math.sin(i * 0.7 + root.animPhase * 0.5))
           }
@@ -620,27 +783,37 @@ Item {
           implicitWidth: (ringRadius + maxBar + Style.space(6)) * 2
           implicitHeight: implicitWidth
 
-          // Radial bars.
-          Repeater {
-            model: orb.barCount
+          // Radial bars. Faded as one group rather than per bar, so the
+          // handoff to the gyre is a single clean gesture and the per-bar
+          // height animations keep their snap while speaking.
+          Item {
+            id: bars
+            anchors.fill: parent
+            opacity: root.busy ? 0 : 1
+            visible: opacity > 0
+            Behavior on opacity { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
 
-            Item {
-              required property int index
-              anchors.centerIn: parent
-              width: 0
-              height: 0
-              rotation: index * (360 / orb.barCount)
+            Repeater {
+              model: orb.barCount
 
-              Rectangle {
-                readonly property real len: orb.barHeight(parent.index)
-                x: -width / 2
-                y: -(orb.ringRadius + Style.space(4)) - height
-                width: Style.space(4)
-                height: len
-                radius: width / 2
-                color: orb.barColor
-                opacity: 0.3 + 0.7 * ((len - orb.minBar) / orb.maxBar)
-                Behavior on height { NumberAnimation { duration: 70 } }
+              Item {
+                required property int index
+                anchors.centerIn: parent
+                width: 0
+                height: 0
+                rotation: index * (360 / orb.barCount)
+
+                Rectangle {
+                  readonly property real len: orb.barHeight(parent.index)
+                  x: -width / 2
+                  y: -(orb.ringRadius + Style.space(4)) - height
+                  width: Style.space(4)
+                  height: len
+                  radius: width / 2
+                  color: orb.barColor
+                  opacity: 0.3 + 0.7 * ((len - orb.minBar) / orb.maxBar)
+                  Behavior on height { NumberAnimation { duration: 70 } }
+                }
               }
             }
           }
@@ -749,6 +922,196 @@ Item {
               ctx.globalAlpha = 1
             }
           }
+
+          // The gyre. While the agent works the ring stops being a mouth
+          // and becomes an instrument: three arcs sweep it at unrelated
+          // speeds — two one way, one the other — so the figure never
+          // visibly repeats and the eye can't mistake it for a freeze.
+          // Each tool call fires a sonar ring outward and kicks the arcs
+          // forward, so the orb ticks in time with work actually happening.
+          Canvas {
+            id: gyre
+            anchors.centerIn: parent
+            width: parent.width
+            height: parent.height
+            opacity: root.busy ? 1 : 0
+            visible: opacity > 0
+            Behavior on opacity { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+
+            // Decaying speed kick, reset by each tool call.
+            property real surge: 0
+            // In-flight sonar rings, each its own 0→1 progress.
+            property var pings: []
+
+            function ping() {
+              surge = 1
+              var next = pings.slice()
+              next.push(0)
+              while (next.length > 5) next.shift()
+              pings = next
+            }
+
+            // Radii are offsets from the ring, spread across the space the
+            // bars vacate. The speeds are deliberately incommensurate so the
+            // three heads never re-align, and `hot` walks each arc down the
+            // rust ramp so depth reads even when they cross.
+            readonly property var arcs: [
+              { r: 16, sweep: 2.10, w: 3.2, dir:  1, speed: 1.00, alpha: 1.00, hot: 1.00 },
+              { r: 30, sweep: 1.30, w: 2.2, dir: -1, speed: 0.62, alpha: 0.85, hot: 0.55 },
+              { r:  4, sweep: 3.10, w: 1.6, dir:  1, speed: 1.73, alpha: 0.60, hot: 0.30 }
+            ]
+
+            // The orb's heat ramp: deep oxidized iron through to bright ember.
+            function heatColor(hot) {
+              return Qt.rgba((183 + (245 - 183) * hot) / 255,
+                             (65 + (177 - 65) * hot) / 255,
+                             (14 + (66 - 14) * hot) / 255, 1)
+            }
+
+            // One arc as a comet: segments of falling width and alpha behind
+            // a bright head. Canvas can't gradient along an arc, so the tail
+            // is drawn as a short run of strokes.
+            function comet(ctx, cx, cy, r, head, sweep, w, dir, alpha, hot) {
+              var body = heatColor(hot)
+              var segs = 44
+              for (var i = 0; i < segs; i++) {
+                var f = i / segs
+                var a0 = head - dir * sweep * f
+                var a1 = head - dir * sweep * (f + 1 / segs)
+                ctx.beginPath()
+                ctx.lineWidth = Math.max(0.6, w * (1 - 0.65 * f))
+                ctx.globalAlpha = alpha * Math.pow(1 - f, 1.5)
+                ctx.strokeStyle = body
+                ctx.arc(cx, cy, r, Math.min(a0, a1), Math.max(a0, a1))
+                ctx.stroke()
+              }
+              // The head runs hotter than its tail, so the leading edge
+              // stays legible against the swarm behind it.
+              var hx = cx + r * Math.cos(head)
+              var hy = cy + r * Math.sin(head)
+              ctx.fillStyle = heatColor(Math.min(1, hot + 0.35))
+              ctx.globalAlpha = alpha * 0.22
+              ctx.beginPath()
+              ctx.arc(hx, hy, w * 2.0, 0, Math.PI * 2)
+              ctx.fill()
+              ctx.globalAlpha = alpha
+              ctx.beginPath()
+              ctx.arc(hx, hy, w * 0.8, 0, Math.PI * 2)
+              ctx.fill()
+            }
+
+            onPaint: {
+              var ctx = getContext("2d")
+              ctx.clearRect(0, 0, width, height)
+              var cx = width / 2
+              var cy = height / 2
+              var base = orb.ringRadius
+              surge *= 0.94
+              var t = root.animPhase * (1 + 1.6 * surge)
+
+              // Faint dial the arcs ride on, so the ring still reads as a
+              // ring in the gaps between comet heads.
+              ctx.globalAlpha = 0.10
+              ctx.lineWidth = Math.max(1, Style.spaceReal(1))
+              ctx.strokeStyle = root.rust
+              ctx.beginPath()
+              ctx.arc(cx, cy, base + Style.spaceReal(16), 0, Math.PI * 2)
+              ctx.stroke()
+
+              for (var i = 0; i < arcs.length; i++) {
+                var a = arcs[i]
+                comet(ctx, cx, cy, base + Style.spaceReal(a.r), t * a.speed * a.dir,
+                      a.sweep, Style.spaceReal(a.w), a.dir, a.alpha, a.hot)
+              }
+
+              // Sonar: one expanding ring per tool call, fading as it goes.
+              if (pings.length > 0) {
+                var live = []
+                for (var j = 0; j < pings.length; j++) {
+                  var pr = pings[j] + 0.028
+                  if (pr >= 1) continue
+                  live.push(pr)
+                  ctx.globalAlpha = 0.55 * (1 - pr) * (1 - pr)
+                  ctx.lineWidth = Math.max(1, Style.spaceReal(2) * (1 - pr))
+                  ctx.strokeStyle = root.ember
+                  ctx.beginPath()
+                  ctx.arc(cx, cy, base * 0.45 + pr * base * 0.72, 0, Math.PI * 2)
+                  ctx.stroke()
+                }
+                pings = live
+              }
+              ctx.globalAlpha = 1
+            }
+          }
+        }
+
+        // Working caption: which phase, how long it has been going, and the
+        // newest thing the agent actually did. The clock is deliberately
+        // prominent — "is this still running?" is the question the panel
+        // used to leave unanswered.
+        ColumnLayout {
+          visible: root.busy
+          Layout.fillWidth: true
+          spacing: Style.space(4)
+
+          RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            spacing: Style.space(8)
+
+            Text {
+              text: root.phase === "transcribing" ? "TRANSCRIBING" : "THINKING"
+              color: root.ember
+              // Slow breath, so the caption never looks frozen either.
+              opacity: 0.6 + 0.4 * (1 + Math.sin(root.animPhase * 0.9)) / 2
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: 3
+            }
+
+            Text {
+              text: root.elapsedLabel()
+              color: Qt.alpha(Color.popups.text, 0.5)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+
+            // Context carried by the last call. It ticks up as tool results
+            // land, so it is a second heartbeat — and the rest of the
+            // numbers stay in the drawer rather than on the face.
+            Text {
+              visible: root.turnCtx > 0
+              text: "· " + root.fmtTokens(root.turnCtx) + " ctx"
+              color: Qt.alpha(Color.popups.text, 0.4)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          Text {
+            visible: text !== ""
+            text: root.lastActivity
+              ? ((root.lastActivity.label ? root.lastActivity.label + "  " : "")
+                 + String(root.lastActivity.detail || "")).trim()
+              : ""
+            color: Qt.alpha(Color.popups.text, 0.55)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
+            maximumLineCount: 1
+            Layout.fillWidth: true
+
+            // The one-line summary is a lid on the whole log.
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                root.activityOpen = !root.activityOpen
+                keyCatcher.forceActiveFocus()
+              }
+            }
+          }
         }
 
         Text {
@@ -766,6 +1129,8 @@ Item {
         // moving the rest of the panel.
         Rectangle {
           visible: root.pendingGrant !== null
+          opacity: root.pendingGrant !== null ? 1 : 0
+          Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
           Layout.fillWidth: true
           implicitHeight: Math.min(grantCol.implicitHeight + Style.space(24), Style.space(170))
           radius: Style.cornerRadius
@@ -904,6 +1269,150 @@ Item {
             font.pixelSize: Style.font.subtitle
             lineHeight: 1.5
             wrapMode: Text.Wrap
+          }
+        }
+
+        // Ctrl+I: the turn's full activity, newest at the bottom. One line
+        // per step on purpose — a log you scan, not one you read. Height is
+        // fixed so streaming lines never make the window jitter.
+        Rectangle {
+          visible: root.activityOpen
+          Layout.fillWidth: true
+          implicitHeight: Style.space(230)
+          radius: Style.cornerRadius
+          color: Qt.alpha(Color.popups.text, 0.04)
+          border.color: Qt.alpha(root.rust, 0.35)
+          border.width: Math.max(1, Style.normalBorderWidth)
+
+          ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: Style.space(12)
+            spacing: Style.space(6)
+
+            RowLayout {
+              Layout.fillWidth: true
+
+              Text {
+                text: "ACTIVITY"
+                color: root.ember
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 2
+              }
+
+              Item { Layout.fillWidth: true }
+
+              Text {
+                text: activityModel.count + (activityModel.count === 1 ? " step" : " steps")
+                  + " · Ctrl+I to close"
+                color: Qt.alpha(Color.popups.text, 0.4)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+              }
+            }
+
+            ListView {
+              Layout.fillWidth: true
+              Layout.fillHeight: true
+              clip: true
+              model: activityModel
+              spacing: Style.space(3)
+              boundsBehavior: Flickable.StopAtBounds
+              // Pin to the newest line, the way a terminal does.
+              onCountChanged: Qt.callLater(function() { positionViewAtEnd() })
+
+              delegate: RowLayout {
+                id: step
+                width: ListView.view ? ListView.view.width : 0
+                spacing: Style.space(6)
+
+                // Tools lead, results follow, errors shout.
+                readonly property color tint: model.kind === "error" ? Color.urgent
+                  : model.kind === "tool" ? root.ember
+                  : Qt.alpha(Color.popups.text, 0.45)
+
+                Text {
+                  text: model.kind === "tool" ? "▸"
+                    : model.kind === "error" ? "✕"
+                    : model.kind === "meta" ? "◆"
+                    : model.kind === "text" ? "·" : "↳"
+                  color: step.tint
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                Text {
+                  visible: model.label !== ""
+                  text: model.label
+                  color: step.tint
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                  font.bold: true
+                }
+
+                Text {
+                  text: model.detail
+                  color: model.kind === "error" ? Color.urgent
+                    : Qt.alpha(Color.popups.text, model.kind === "tool" ? 0.75 : 0.5)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                  font.italic: model.kind === "text"
+                  elide: Text.ElideRight
+                  maximumLineCount: 1
+                  Layout.fillWidth: true
+                }
+              }
+            }
+
+            Text {
+              visible: activityModel.count === 0
+              text: root.busy
+                ? "Waiting for the first step…"
+                : "Nothing yet — the steps of the next answer show up here."
+              color: Qt.alpha(Color.popups.text, 0.4)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Rectangle {
+              visible: root.statChips.length > 0
+              Layout.fillWidth: true
+              implicitHeight: Math.max(1, Style.normalBorderWidth)
+              color: Qt.alpha(Color.popups.text, 0.10)
+            }
+
+            // Tokens, cost and account usage — the numbers you want once in
+            // a while, parked where they cost nothing until you open this.
+            Flow {
+              visible: root.statChips.length > 0
+              Layout.fillWidth: true
+              spacing: Style.space(14)
+
+              Repeater {
+                model: root.statChips
+
+                Row {
+                  required property var modelData
+                  spacing: Style.space(5)
+
+                  Text {
+                    text: modelData.k
+                    color: Qt.alpha(Color.popups.text, 0.35)
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  Text {
+                    text: modelData.v
+                    color: modelData.warn ? Color.urgent : Qt.alpha(Color.popups.text, 0.75)
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+                }
+              }
+            }
           }
         }
 

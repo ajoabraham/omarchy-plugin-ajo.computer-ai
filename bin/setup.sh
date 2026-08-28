@@ -9,7 +9,7 @@
 # wiring — or appends it for you with --wire.
 set -u
 plugin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-data_dir="$HOME/.local/share/computer"
+data_dir="$HOME/.local/share/computer-ai"
 settings_file="$data_dir/claude-settings.json"
 wire=0
 no_tts=0

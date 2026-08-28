@@ -4,7 +4,7 @@
 # plugin hot-reload and kill the open panel); ask.sh consumes it on the next
 # turn and mints a new session.
 set -eu
-state="$HOME/.local/share/computer/state"
+state="$HOME/.local/share/computer-ai/state"
 mkdir -p "$state"
 touch "$state/new-conversation-requested"
 echo "New conversation queued — the next question starts fresh."
