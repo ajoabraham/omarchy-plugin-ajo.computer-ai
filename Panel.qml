@@ -54,6 +54,9 @@ Item {
   // null). The agent can only queue requests; approval happens here —
   // click Allow/Deny or press A/D — and applies from the next question.
   property var pendingGrant: null
+  // Set when the user allows a grant; once the queue drains the panel
+  // auto-continues the turn so they don't have to say "go ahead".
+  property bool grantResumePending: false
   // "new" for the first question after the panel opens (ask.sh applies its
   // grace window), "follow" for later turns — they resume the same agent
   // conversation, so follow-ups keep their context.
@@ -499,7 +502,16 @@ Item {
     if (grantAct.running || pendingGrant === null) return
     grantAct.command = [binDir + "/apply-grant.sh", allowIt ? "allow" : "deny"]
     grantAct.running = true
-    if (allowIt && phase === "idle" && !speakProc.running) say("Permission granted.")
+    if (allowIt) grantResumePending = true
+  }
+
+  // After the last queued grant is approved, pick the turn back up on its own.
+  function resumeAfterGrants() {
+    // Only when nothing is mid-flight (a reply may still be speaking — that is
+    // fine, submitText stops it). Never interrupt an active turn.
+    if (!opened || typing) return
+    if (phase === "listening" || phase === "transcribing" || phase === "thinking") return
+    submitText("The permission you asked for is approved now. Go ahead and finish what you were doing.")
   }
 
   Process {
@@ -514,6 +526,10 @@ Item {
           if (line !== "") parsed = JSON.parse(line)
         } catch (e) {}
         root.pendingGrant = parsed
+        if (parsed === null && root.grantResumePending) {
+          root.grantResumePending = false
+          Qt.callLater(root.resumeAfterGrants)
+        }
       }
     }
   }
