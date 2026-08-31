@@ -5,38 +5,51 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// The Computer voice assistant: a floating window (move it with Super+drag,
-// close with Esc or the window button) that runs one conversation turn as a
-// pipeline of processes —
+// The Computer voice assistant, as an Omarchy bar widget: an icon in the
+// status bar with a popup that drops down beneath it (like bluetooth/audio),
+// backed by a persistent agent that lives for the whole shell session.
+//
+// One conversation turn runs as a pipeline of processes —
 // record (ffmpeg) → transcribe (voxtype) → ask (claude/grok) → speak (tts).
-// Its centerpiece is an orb of radial bars driven by real audio levels:
-// live mic RMS while listening and the reply audio's RMS timeline while
-// speaking. While the agent works the bars retract and the gyre takes over
-// — sweeping arcs, an elapsed clock, and the newest step the agent took —
-// because a turn can run for minutes and a still orb reads as a hang.
-// Keys (Enter/Space to speak, Ctrl+I for the activity log, Esc to close)
-// only act while the window has keyboard focus, like any other window.
-// Summoned by hotkey via `omarchy-shell shell summon ajo.computer-ai
-// '{"listen": true}'`; payload {"say": "text"} speaks arbitrary text.
-Item {
+// Its centerpiece is an orb of radial bars driven by real audio levels: live
+// mic RMS while listening and the reply audio's RMS timeline while speaking.
+// While the agent works the bars retract and the gyre takes over — sweeping
+// arcs, an elapsed clock, and the newest step the agent took — because a turn
+// can run for minutes and a still orb reads as a hang.
+//
+// Closing the popup (Esc or clicking away) only HIDES it: the turn keeps
+// running and keeps speaking, and the bar icon shows that it is still working.
+// To stop the current turn, open the popup and press Enter. The pipeline never
+// checks whether the popup is visible — only `expectedStop` halts it — so an
+// answer finishes and is spoken even with the panel closed.
+//
+// Summoned by hotkey via `omarchy-shell ajo.computer-ai summon '{"listen":
+// true}'`; the mic is armed only when idle, so summoning mid-turn just shows
+// progress. IPC `say` speaks arbitrary text; `stop` ends the current turn.
+Panel {
   id: root
+  moduleName: "ajo.computer-ai"
+  // Leave ipcTarget unset: the base Panel's IpcHandler claims (and shadows)
+  // whatever target it's given even with manageIpc:false, which would bury our
+  // custom verbs. We register our own handler below as the sole owner of the
+  // "ajo.computer-ai" target so summon/say/stop actually reach us.
+  manageIpc: false
 
-  property var shell: null
-  property var manifest: null
+  // The bar allocates a slot the size of the icon button.
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
 
   readonly property string home: Quickshell.env("HOME")
-  // The shell stamps the plugin's own directory onto its manifest, so the
-  // panel locates its scripts wherever it was actually installed rather than
-  // assuming the canonical path — a dev symlink under another name included.
-  // The literal stays as a fallback in case a shell build doesn't stamp it.
-  readonly property string pluginDir: (manifest && manifest.__sourceDir)
-    ? String(manifest.__sourceDir).replace(/\/+$/, "")
-    : home + "/.config/omarchy/plugins/ajo.computer-ai"
+  // Bar widgets aren't handed their manifest's source directory, so resolve
+  // the plugin's own install location from this file's URL instead — robust
+  // to a dev symlink under another name.
+  readonly property string pluginDir: {
+    var u = String(Qt.resolvedUrl(".")).replace(/\/+$/, "")
+    return decodeURIComponent(u.replace(/^file:\/\//, ""))
+  }
   readonly property string binDir: pluginDir + "/bin"
   readonly property string recFile: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/computer-ai-question.wav"
 
-  property bool opened: false
-  property bool closingFromHost: false
   // idle | listening | transcribing | thinking | speaking
   property string phase: "idle"
   // The agent is off doing something and there is nothing to hear.
@@ -57,7 +70,7 @@ Item {
   // Set when the user allows a grant; once the queue drains the panel
   // auto-continues the turn so they don't have to say "go ahead".
   property bool grantResumePending: false
-  // "new" for the first question after the panel opens (ask.sh applies its
+  // "new" for the first question after a fresh summon (ask.sh applies its
   // grace window), "follow" for later turns — they resume the same agent
   // conversation, so follow-ups keep their context.
   property string turnMode: "new"
@@ -161,7 +174,8 @@ Item {
     }
   }
 
-  // Setting running=false sends SIGTERM; thinking-tone.sh traps it and fades.
+  // Setting running=false sends SIGTERM; thinking-tone.sh execs ffmpeg so the
+  // managed process IS the audio and dies with it.
   Process {
     id: toneProc
     command: [binDir + "/thinking-tone.sh"]
@@ -177,6 +191,8 @@ Item {
   // The orb's rust ramp, shared by the bars, the swarm and the gyre.
   readonly property color rust: Qt.rgba(183 / 255, 65 / 255, 14 / 255, 1)
   readonly property color ember: Qt.rgba(245 / 255, 177 / 255, 66 / 255, 1)
+  // Live-mic red for the bar icon while listening.
+  readonly property color recRed: Qt.rgba(230 / 255, 56 / 255, 56 / 255, 1)
 
   // --- audio levels driving the orb ---
 
@@ -259,10 +275,21 @@ Item {
     running: root.opened
     onTriggered: {
       root.animPhase = (root.animPhase + 0.16) % (Math.PI * 2000)
-      if (!window.visible) return
+      if (!root.opened) return
       swarm.requestPaint()
       if (gyre.visible) gyre.requestPaint()
     }
+  }
+
+  // Free-running phase for the bar-icon equalizer while speaking. Its own
+  // timer (not animTimer, which pauses with the popup) so the bars keep
+  // bouncing even when the panel is closed.
+  property real barPhase: 0
+  Timer {
+    interval: 55
+    repeat: true
+    running: root.phase === "speaking" || root.phase === "listening"
+    onTriggered: root.barPhase = (root.barPhase + 0.4) % (Math.PI * 2000)
   }
 
   Timer {
@@ -302,36 +329,45 @@ Item {
     return "Press Enter to speak · / to type"
   }
 
-  function open(payloadJson) {
-    var payload = {}
-    try { payload = JSON.parse(payloadJson || "{}") || {} } catch (e) {}
-    closingFromHost = false
-    opened = true
-    turnMode = "new"
-    window.visible = true
+  // --- popup lifecycle ------------------------------------------------------
+  //
+  // Overrides the base Panel.open() so showing the popup also refreshes the
+  // pickers/grants/mic and takes keyboard focus — but never arms the mic.
+  // Clicking the bar icon just shows what's there; the mic is armed only
+  // through summon() (the hotkey), and only when idle.
+  function open() {
+    controller.show()
     refreshSettings()
     refreshGrants()
     refreshMic()
     if (!activityProc.running) activityProc.running = true
-    if (payload.say) say(String(payload.say))
-    else if (payload.listen !== false) startListening()
     Qt.callLater(function() {
       if (root.opened) keyCatcher.forceActiveFocus()
     })
   }
 
-  // Stop every running process and reset turn state. Called whenever the
-  // window goes invisible (see the window's onVisibleChanged), so closing
-  // mid-thinking actually kills the agent, the tone, and any speech instead
-  // of orphaning them.
+  // Hotkey entry point (End → summon.sh → IPC). Shows the popup, and starts a
+  // fresh listening turn only when nothing is already in flight — summoning
+  // while the agent is thinking or speaking must not begin recording, it just
+  // brings the progress into view.
+  function summon(payloadJson) {
+    var payload = {}
+    try { payload = JSON.parse(payloadJson || "{}") || {} } catch (e) {}
+    open()
+    turnMode = "new"
+    if (payload.say) { say(String(payload.say)); return }
+    if (payload.listen !== false && phase === "idle") startListening()
+  }
+
+  // Stop every running process and reset turn state. Kept for a hard reset
+  // (IPC or a future kill path); the popup closing no longer calls this — a
+  // turn survives the panel being hidden.
   function teardown() {
     expectedStop = true
     if (recProc.running) recProc.running = false
     if (transProc.running) transProc.running = false
     if (askProc.running) askProc.running = false
     if (speakProc.running) speakProc.running = false
-    if (activityProc.running) activityProc.running = false
-    if (toneProc.running) toneProc.running = false
     speechTimer.stop()
     speechLevels = []
     speechIndex = -1
@@ -347,24 +383,12 @@ Item {
     grantResumePending = false
   }
 
-  function close() {
-    closingFromHost = true
-    window.visible = false     // fires onVisibleChanged → teardown()
-    closingFromHost = false
-    opened = false
-    teardown()
-  }
-
-  function dismiss() {
-    // Stop the agent/tone/speech FIRST, while the Process objects are still
-    // alive to receive the signal — shell.hide() destroys the component, so
-    // tearing down afterwards (via onVisibleChanged) is too late and orphans
-    // the children.
-    opened = false
-    teardown()
-    if (shell && typeof shell.hide === "function")
-      shell.hide((manifest && manifest.id) || "ajo.computer-ai")
-    else close()
+  // Stop whatever is happening right now (the "open panel + Enter" gesture,
+  // also reachable by right-clicking the bar icon or IPC `stop`).
+  function stopAll() {
+    if (phase === "listening") stopListening()
+    else if (phase === "transcribing" || phase === "thinking") cancelTurn()
+    else if (phase === "speaking") stopSpeaking()
   }
 
   function startListening() {
@@ -442,6 +466,7 @@ Item {
     response = ""
     error = ""
     phase = "thinking"
+    if (!activityProc.running) activityProc.running = true
     askProc.command = [binDir + "/ask.sh", t, turnMode]
     askProc.running = true
     keyCatcher.forceActiveFocus()
@@ -452,8 +477,8 @@ Item {
     if (speakProc.running) speakProc.running = false
   }
 
-  // Speak arbitrary text (summon payload {"say": "..."}), bypassing the
-  // question pipeline — also handy for other scripts that want a voice.
+  // Speak arbitrary text (IPC `say`), bypassing the question pipeline — also
+  // handy for other scripts that want a voice.
   function say(text) {
     if (speakProc.running) speakProc.running = false
     speechTimer.stop()
@@ -524,7 +549,7 @@ Item {
   function resumeAfterGrants() {
     // Only when nothing is mid-flight (a reply may still be speaking — that is
     // fine, submitText stops it). Never interrupt an active turn.
-    if (!opened || typing) return
+    if (typing) return
     if (phase === "listening" || phase === "transcribing" || phase === "thinking") return
     submitText("The permission you asked for is approved now. Go ahead and finish what you were doing.")
   }
@@ -560,7 +585,9 @@ Item {
 
   // -n 0 starts at the end of the file, so opening the panel never replays
   // a stale turn; ask.sh truncates the log before each turn and -F picks
-  // that up. Adapters that can't stream simply never write to it.
+  // that up. Adapters that can't stream simply never write to it. Left
+  // running for the whole session so a turn started with the popup closed
+  // still fills the drawer for when it is next opened.
   Process {
     id: activityProc
     command: ["bash", "-c",
@@ -569,6 +596,8 @@ Item {
       onRead: function(line) { root.pushActivity(line) }
     }
   }
+
+  Component.onCompleted: activityProc.running = true
 
   function pushActivity(line) {
     var ev = null
@@ -593,7 +622,7 @@ Item {
     if (ev.kind !== "meta") root.lastActivity = ev
     // Every tool call kicks the orb, so real progress is visible from
     // across the room without reading a word.
-    if (ev.kind === "tool" && window.visible) gyre.ping()
+    if (ev.kind === "tool" && root.opened) gyre.ping()
   }
 
   // --- pipeline: record → transcribe → ask → speak ---
@@ -628,7 +657,7 @@ Item {
       }
     }
     onExited: function() {
-      if (root.expectedStop || !root.opened) return
+      if (root.expectedStop) return
       root.phase = "transcribing"
       transProc.command = [root.binDir + "/transcribe.sh", root.recFile]
       transProc.running = true
@@ -640,12 +669,12 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        if (root.expectedStop || !root.opened) return
+        if (root.expectedStop) return
         root.transcript = String(text || "").trim()
       }
     }
     onExited: function(exitCode) {
-      if (root.expectedStop || !root.opened) return
+      if (root.expectedStop) return
       // Whisper hallucinates lone punctuation on silence; treat it as nothing.
       var heard = root.transcript.replace(/[^a-zA-Z0-9]/g, "")
       if (exitCode !== 0 || heard === "") {
@@ -665,12 +694,12 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        if (root.expectedStop || !root.opened) return
+        if (root.expectedStop) return
         root.response = String(text || "").trim()
       }
     }
     onExited: function(exitCode) {
-      if (root.expectedStop || !root.opened) { root.refreshGrants(); return }
+      if (root.expectedStop) { root.refreshGrants(); return }
       if (exitCode !== 0 || root.response === "") {
         root.error = root.agentLabel + " didn't answer — try again"
         root.phase = "idle"
@@ -721,7 +750,6 @@ Item {
       speechTimer.stop()
       root.speechIndex = -1
       root.speechLevels = []
-      if (!root.opened) return
       if (root.phase === "speaking") root.phase = "idle"
       // Ask, then show: the agent explains the request out loud and the
       // card lands as it finishes — including when you cut it off with
@@ -832,49 +860,110 @@ Item {
     id: setModelProc
   }
 
-  // --- UI ---
+  // --- IPC: summon (hotkey), say, stop, and the base open/close/toggle ---
 
-  FloatingWindow {
-    id: window
-    title: "Computer"
-    visible: false
-    // Frosted glass: translucent panel background; Hyprland's blur does the
-    // rest behind it.
-    color: Qt.alpha(Color.popups.background, 0.84)
-    implicitWidth: Style.space(620)
+  IpcHandler {
+    target: "ajo.computer-ai"
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function toggle(): void { root.toggle() }
+    function summon(payload: string): void { root.summon(payload) }
+    function say(text: string): void { root.open(); root.say(text) }
+    function stop(): void { root.stopAll() }
+  }
 
-    // The panel is sized by what is in it: opening the activity drawer, the
-    // settings or a grant card makes it taller, closing them makes it short
-    // again. Only the compositor can resize a mapped floating window — a
-    // plain `height` write after map is ignored — and it does that by
-    // enforcing the client's min/max. So *both* bounds track the content:
-    // a growing minimum alone can push the window open but never pull it
-    // back. The capped regions inside keep the total bounded, and the floor
-    // keeps the orb from ever being clipped.
-    readonly property int fitHeight: Math.max(Style.space(380),
-      Math.min(Style.space(1000), Math.round(content.implicitHeight + Style.space(48))))
+  // --- bar icon -------------------------------------------------------------
 
-    implicitHeight: fitHeight
-    // Width stays adjustable; only height is pinned to the content.
-    minimumSize: Qt.size(Style.space(440), fitHeight)
-    maximumSize: Qt.size(Style.space(980), fitHeight)
+  BarIconButton {
+    id: button
+    anchors.fill: parent
+    bar: root.bar
+    // Listening and speaking both hide the glyph and draw a live equalizer,
+    // just like the orb's radial bars react to audio — red for your voice
+    // coming in, ember for the reply going out. Thinking shows a pulsing
+    // radiobox core; idle shows the orbit.
+    text: root.phase === "speaking" ? "󰥛"       // kept for slot sizing, drawn transparent
+        : root.busy                 ? "󰐾"       // radiobox core, thinking
+        : "󰀘"                                    // orbit, idle / listening
+    active: root.phase !== "idle"
+    useActiveColor: true
+    activeColor: (root.phase === "listening" || root.phase === "speaking")
+               ? "transparent"              // equalizer drawn instead of the glyph
+               : root.rust                  // thinking / transcribing (radiobox core)
+    tooltipText: root.busy
+      ? (root.agentLabel + " is working — " + root.elapsedLabel())
+      : root.phase === "listening" ? "Listening…"
+      : root.phase === "speaking"  ? "Speaking…"
+      : "Computer — click, or press End, to speak"
 
-    // User-initiated close (window button / compositor). Tell the shell so
-    // its open-panel state stays consistent and the next summon works.
-    onVisibleChanged: {
-      if (visible) return
-      root.opened = false
-      root.teardown()            // kill the agent / tone / speech on any close
-      if (!root.closingFromHost && root.shell && typeof root.shell.hide === "function")
-        root.shell.hide((root.manifest && root.manifest.id) || "ajo.computer-ai")
+    onPressed: function(buttonCode) {
+      // Right-click stops the current turn (same as open + Enter); left
+      // toggles the popup.
+      if (buttonCode === Qt.RightButton) root.stopAll()
+      else root.toggle()
     }
+
+    // Thinking: a slow rust breath on the radiobox core. (Listening and
+    // speaking use the equalizer below; idle sits still.)
+    SequentialAnimation on opacity {
+      running: root.busy
+      loops: Animation.Infinite
+      alwaysRunToEnd: true
+      NumberAnimation { to: 0.4; duration: 720; easing.type: Easing.InOutSine }
+      NumberAnimation { to: 1.0; duration: 720; easing.type: Easing.InOutSine }
+      onStopped: button.opacity = 1
+    }
+
+    // Live equalizer for listening (red, driven by your mic) and speaking
+    // (ember, driven by the reply audio) — displayLevel already carries the
+    // right signal per phase, plus a per-bar wobble. The bar-sized cousin of
+    // the orb's radial bars.
+    Row {
+      anchors.centerIn: parent
+      visible: root.phase === "listening" || root.phase === "speaking"
+      spacing: Math.max(1, Style.space(2))
+
+      Repeater {
+        model: 4
+
+        Rectangle {
+          required property int index
+          width: Math.max(2, Style.space(2.5))
+          radius: width / 2
+          color: root.phase === "listening" ? root.recRed : root.ember
+          anchors.verticalCenter: parent.verticalCenter
+          readonly property real lvl: 0.32 + 0.68 * root.displayLevel
+          height: {
+            var w = 0.5 + 0.5 * Math.sin(root.barPhase * (1 + index * 0.45) + index * 1.7)
+            return Math.max(2, Style.space(4) + Style.space(11) * lvl * w)
+          }
+          Behavior on height { NumberAnimation { duration: 60 } }
+        }
+      }
+    }
+  }
+
+  // --- popup ---------------------------------------------------------------
+
+  KeyboardPanel {
+    id: panel
+    anchorItem: button
+    owner: root
+    bar: root.bar
+    open: root.opened
+    focusTarget: keyCatcher
+    contentWidth: panel.fittedContentWidth(Style.space(560))
+    // Full height for the content, capped and scrolled per-section rather
+    // than shrunk — the orb keeps its size; grant/activity/settings scroll
+    // inside their own slots.
+    contentHeight: panel.fittedContentHeight(content.implicitHeight + Style.space(20), Style.space(940))
 
     Item {
       id: keyCatcher
       anchors.fill: parent
       focus: true
 
-      Keys.onEscapePressed: root.dismiss()
+      Keys.onEscapePressed: root.close()
       Keys.onReturnPressed: root.activate()
       Keys.onEnterPressed: root.activate()
       Keys.onSpacePressed: root.activate()
@@ -899,16 +988,16 @@ Item {
 
       // Fixed column: the orb and status never scroll away. Regions that can
       // outgrow their slot (grant card, settings) scroll independently, and
-      // the window itself grows with content up to its cap.
+      // the popup grows with content up to its cap.
       ColumnLayout {
         id: content
         anchors {
           left: parent.left
           right: parent.right
           top: parent.top
-          leftMargin: Style.space(32)
-          rightMargin: Style.space(32)
-          topMargin: Style.space(24)
+          leftMargin: Style.space(24)
+          rightMargin: Style.space(24)
+          topMargin: Style.space(16)
         }
         spacing: Style.space(16)
 

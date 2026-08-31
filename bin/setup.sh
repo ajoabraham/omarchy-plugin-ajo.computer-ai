@@ -86,29 +86,40 @@ else
 fi
 
 echo
+echo "Bar widget:"
+# The assistant is a bar widget now (an icon with a drop-down panel), not a
+# floating window — so there is no window rule to add. Enable it and drop it
+# into the bar's right section.
+if omarchy plugin list 2>/dev/null | grep -q "ajo.computer-ai"; then ok "plugin discovered"
+else note "run 'omarchy-shell shell rescanPlugins' if the icon doesn't appear"; fi
+if [ "$wire" = 1 ]; then
+  omarchy plugin enable ajo.computer-ai right >/dev/null 2>&1 \
+    && ok "enabled and placed in the bar (right section)" \
+    || note "enable it yourself: omarchy plugin enable ajo.computer-ai right"
+else
+  note "place it with: omarchy plugin enable ajo.computer-ai right"
+  note "(or move it later: omarchy bar move ajo.computer-ai <left|center|right>)"
+fi
+
+echo
 echo "Hyprland wiring:"
 bindings="$HOME/.config/hypr/bindings.lua"
-hyprlua="$HOME/.config/hypr/hyprland.lua"
 bind_line="o.bind(\"End\", \"Computer\", os.getenv(\"HOME\") .. \"/.config/omarchy/plugins/ajo.computer-ai/bin/summon.sh\")"
-rule_line="o.window({ class = \"^(org\\\\.quickshell)\$\", title = \"^(Computer)\$\" }, { float = true, center = true })"
-need_bind=1; need_rule=1
+need_bind=1
 grep -q "ajo.computer-ai/bin/summon.sh" "$bindings" 2>/dev/null && { ok "summon keybinding present"; need_bind=0; }
-grep -q 'title = "\^(Computer)\$"' "$hyprlua" 2>/dev/null && { ok "float rule present"; need_rule=0; }
-if [ "$need_bind" = 1 ] || [ "$need_rule" = 1 ]; then
+if [ "$need_bind" = 1 ]; then
   if [ "$wire" = 1 ]; then
-    [ "$need_bind" = 1 ] && printf '\n-- Computer AI: summon listening (End = Fn+Right on most laptops).\n%s\n' "$bind_line" >> "$bindings" && ok "added keybinding to $bindings"
-    [ "$need_rule" = 1 ] && printf '\n-- Computer AI: float the panel window.\n%s\n' "$rule_line" >> "$hyprlua" && ok "added float rule to $hyprlua"
+    printf '\n-- Computer AI: summon listening (End = Fn+Right on most laptops).\n%s\n' "$bind_line" >> "$bindings" && ok "added keybinding to $bindings"
     command -v hyprctl >/dev/null 2>&1 && hyprctl reload >/dev/null 2>&1
   else
-    bad "not wired — add these (or rerun with --wire):"
-    [ "$need_bind" = 1 ] && note "$bindings: $bind_line"
-    [ "$need_rule" = 1 ] && note "$hyprlua: $rule_line"
+    bad "not wired — add this (or rerun with --wire):"
+    note "$bindings: $bind_line"
   fi
 fi
 
 echo
 if [ "$missing" = 0 ]; then
-  echo "All set. Enable with: omarchy plugin enable ajo.computer-ai — then press your hotkey and speak."
+  echo "All set. The icon is in your bar — click it, or press End, and speak."
 else
   echo "Some items need attention above; rerun setup after fixing them."
 fi

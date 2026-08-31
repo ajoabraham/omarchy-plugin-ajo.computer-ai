@@ -3,10 +3,18 @@
 ![Computer AI — voice assistant panel for Omarchy](preview.png)
 
 A Jarvis-style voice assistant plugin for the [Omarchy](https://omarchy.org)
-shell. Press a hotkey, speak, and a pluggable AI agent answers aloud — and
-can operate the desktop (launch apps, drive the browser, set reminders,
-control media) within a user-approved permission policy.
+shell. It lives as a **bar icon** with a drop-down panel — click the icon or
+press a hotkey, speak, and a pluggable AI agent answers aloud — and can
+operate the desktop (launch apps, drive the browser, set reminders, control
+media) within a user-approved permission policy.
 
+- **Bar widget**: an icon in the status bar with a panel that drops down
+  beneath it, just like the bluetooth or audio widgets — click away to
+  close. The agent lives for the whole shell session, so closing the panel
+  only *hides* it: a turn keeps running and still speaks aloud with the panel
+  shut. The icon shows the state at a glance — an orbit at rest, red bars
+  reacting to your mic while it listens, a pulsing core while it thinks,
+  ember bars dancing to the reply while it speaks.
 - **Orb UI**: audio-reactive particle swarm (a port of the omarchyplugins.com
   parametric canvas) with live mic levels while listening, speech-synced
   playback animation, and mood morphs per phase.
@@ -72,14 +80,19 @@ uses `curl` and `python3`, both already present on Omarchy. TTS lives in
 `~/.local/share/computer-ai/` — setup fetches Piper plus one voice; more Piper
 voices and the nicer Kokoro engine are documented in `bin/speak.sh`.
 
-The Hyprland wiring setup adds (or prints, without `--wire`):
+`setup.sh --wire` places the bar icon and adds the summon keybinding (or
+prints them, without `--wire`). It's a bar widget, so there is no window rule
+— it lives in the bar's layout:
+
+```bash
+# drop the icon into the bar's right section (move it later with
+# `omarchy bar move ajo.computer-ai <left|center|right>`)
+omarchy plugin enable ajo.computer-ai right
+```
 
 ```lua
--- bindings.lua — summon on a key (End = Fn+Right on most laptops)
+-- bindings.lua — summon listening on a key (End = Fn+Right on most laptops)
 o.bind("End", "Computer", os.getenv("HOME") .. "/.config/omarchy/plugins/ajo.computer-ai/bin/summon.sh")
-
--- hyprland.lua — float the panel window
-o.window({ class = "^(org\\.quickshell)$", title = "^(Computer)$" }, { float = true, center = true })
 ```
 
 ## Security & privilege boundaries
@@ -175,11 +188,19 @@ removes the plugin cleanly. Optional leftovers you may also delete:
 `~/.local/share/computer-ai/` (voices, memory, permission policy, state),
 `~/.config/omarchy/computer.json`, `~/.config/himalaya/config.toml` and the
 keyring entries under service `computer-ai-mail` (`secret-tool clear service
-computer-ai-mail`) if you set up email, and the two Hyprland lines that
-`setup.sh --wire` added.
+computer-ai-mail`) if you set up email, and the summon keybinding that
+`setup.sh --wire` added to `bindings.lua` (`omarchy plugin remove` takes the
+icon out of the bar for you).
 
 ## Controls
 
-Enter — speak / send / interrupt · Esc — close · Super+drag — move ·
-Ctrl+I — show/hide the activity log · A / D — approve / deny a permission
-request · Settings drawer — agent + voice.
+**Bar icon** — left-click toggles the panel; right-click stops the current
+turn. **End** (Fn+Right by default) summons it listening from anywhere — but
+only when it's idle, so pressing it mid-turn just brings the progress into
+view rather than recording over the answer.
+
+**In the panel** — Enter: speak / send / interrupt (while it's working, Enter
+cancels) · Esc or click-away: hide the panel (the agent keeps running and
+still speaks) · Ctrl+I: show/hide the activity log · `/`: type a message
+instead of speaking · A / D: approve / deny a permission request · Settings
+drawer: agent + voice.
