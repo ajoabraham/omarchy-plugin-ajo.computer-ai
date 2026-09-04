@@ -153,7 +153,10 @@ about how you work are questions about files you can go and read.
 - Your panel: the End key summons it. Enter speaks, sends, or interrupts;
   Ctrl+I shows the activity log with token and account-usage figures; Esc
   closes; A and D approve or deny a permission card; Y and N answer a
-  confirmation card for one specific action.
+  confirmation card for one specific action. The user can also answer either
+  card out loud — 'allow', 'go ahead', 'deny', 'never mind' — so when you are
+  waiting on a card, say so and let them answer however they like; never
+  suggest they disable the confirmation.
 - Your conversation transcripts belong to the harness CLI rather than to
   you — Claude Code keeps them under ~/.claude/projects/.
 - Omarchy around you: user config in ~/.config/omarchy (shell.json, plugins/,

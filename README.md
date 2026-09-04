@@ -155,11 +155,20 @@ commands. Know the boundaries:
   redirects are followed one at a time and re-checked at each hop rather
   than by `curl --location`, ambient `~/.curlrc` and proxy settings are
   ignored, and size and time are capped.
+- Approving out loud does not weaken the gate. The microphone is armed only
+  by a human gesture — the hotkey, or Enter in the panel — never by anything
+  the agent does, and the panel does not listen while a reply is being
+  spoken, so a reply containing the word "allow" is talking to nobody.
+  Approval also has to be the *whole* utterance ("yes", "go ahead"), while a
+  refusal only has to start like one, so ambiguity resolves toward not
+  acting: "yes but tell me what it does first" is a question, not consent.
+  Anything that is not a decision leaves the card up and is treated as
+  ordinary speech.
 - The boundary is tested, not just described: `bash tests/boundaries.sh`
   checks that the wrappers refuse hostile argv, that disruptive actions do
   not happen without a human yes, that a hostile archive cannot write outside
-  its destination, and that a cancelled or timed-out turn leaves nothing
-  running.
+  its destination, that a cancelled or timed-out turn leaves nothing running,
+  and that a spoken "yes, but…" is never read as a yes.
 - Voice is an input channel, and so is everything the agent reads: pages,
   mail and browser content all arrive in the same context as your words.
   That is why the boundaries above are enforced by wrappers and gates rather
@@ -260,4 +269,12 @@ cancels) · Esc or click-away: hide the panel (the agent keeps running and
 still speaks) · Ctrl+I: show/hide the activity log · `/`: type a message
 instead of speaking · A / D: approve / deny a permission request · Y / N:
 allow / refuse one specific action the assistant has stopped to confirm ·
-Settings drawer: agent + voice.
+Settings drawer: agent, voice, and the two switches below.
+
+**Answering by voice** — when a card is up you can just say it: "allow",
+"yes", "go ahead", "make it so" to approve; "deny", "no", "cancel", "never
+mind" to refuse. If the panel is idle, speak as you normally would. If a
+turn is mid-flight and stopped on a confirmation, press **End** and answer —
+the turn stays running underneath and picks straight back up. The card never
+goes away, so the keys and the mouse work exactly as before; turn the whole
+thing off with *Answer cards by voice* in Settings.

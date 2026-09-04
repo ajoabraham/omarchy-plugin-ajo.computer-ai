@@ -59,6 +59,7 @@ Panel {
   readonly property var pendingConfirm: svc ? svc.pendingConfirm : null
   readonly property bool typing: svc ? svc.typing : false
   readonly property bool toneEnabled: svc ? svc.toneEnabled : true
+  readonly property bool voiceApproval: svc ? svc.voiceApproval : true
 
   readonly property var voiceOptions: svc ? svc.voiceOptions : []
   readonly property var agentOptions: svc ? svc.agentOptions : []
@@ -202,6 +203,11 @@ Panel {
     if (svc) svc.toggleTone()
   }
 
+  function toggleVoiceApproval() {
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    if (svc) svc.toggleVoiceApproval()
+  }
+
   // --- bar icon -------------------------------------------------------------
 
   BarIconButton {
@@ -273,6 +279,69 @@ Panel {
     }
   }
 
+  // A labelled switch for the settings drawer. Written once because there
+  // are two of them now, and a second hand-rolled copy is how two switches
+  // start looking subtly different from each other.
+  component SettingSwitch: RowLayout {
+    id: row
+
+    property string label: ""
+    property string detail: ""
+    property bool on: false
+    signal toggled()
+
+    Layout.fillWidth: true
+    spacing: Style.space(10)
+
+    ColumnLayout {
+      Layout.fillWidth: true
+      spacing: 0
+
+      Text {
+        text: row.label
+        color: Qt.alpha(Color.popups.text, 0.7)
+        font.family: Style.font.family
+        font.pixelSize: Style.font.bodySmall
+        Layout.fillWidth: true
+      }
+
+      Text {
+        visible: text !== ""
+        text: row.detail
+        color: Qt.alpha(Color.popups.text, 0.35)
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.Wrap
+        Layout.fillWidth: true
+      }
+    }
+
+    Rectangle {
+      implicitWidth: Style.space(58)
+      implicitHeight: Style.space(24)
+      radius: height / 2
+      color: row.on ? Qt.alpha(root.ember, 0.22) : Qt.alpha(Color.popups.text, 0.08)
+      border.width: Math.max(1, Style.normalBorderWidth)
+      border.color: row.on ? Qt.alpha(root.ember, 0.6) : Qt.alpha(Color.popups.text, 0.2)
+      Behavior on color { ColorAnimation { duration: 150 } }
+
+      Rectangle {
+        width: Style.space(18); height: width; radius: width / 2
+        y: (parent.height - height) / 2
+        x: row.on ? parent.width - width - Style.space(3) : Style.space(3)
+        color: row.on ? root.ember : Qt.alpha(Color.popups.text, 0.5)
+        Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+        Behavior on color { ColorAnimation { duration: 150 } }
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        onClicked: row.toggled()
+      }
+    }
+  }
+
   // One approval card, used for both gates below. Long requests scroll
   // inside the card rather than pushing the rest of the panel around, and
   // the height cap is what keeps a wordy reason from taking over the popup.
@@ -288,6 +357,9 @@ Panel {
     property string footnote: ""
     property string acceptLabel: ""
     property string refuseLabel: ""
+    // Shown beside the keys when answering out loud is available, so the
+    // card itself teaches the words rather than leaving them in the README.
+    property string spokenHint: ""
 
     signal accepted()
     signal refused()
@@ -377,6 +449,15 @@ Panel {
               cursorShape: Qt.PointingHandCursor
               onClicked: gate.refused()
             }
+          }
+
+          Text {
+            visible: text !== ""
+            text: gate.spokenHint
+            color: Qt.alpha(Color.popups.text, 0.42)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            font.italic: true
           }
         }
       }
@@ -996,6 +1077,7 @@ Panel {
           footnote: "This one time only — it is not remembered."
           acceptLabel: "[Y] Do it"
           refuseLabel: "[N] No"
+          spokenHint: root.voiceApproval ? "or say “allow” / “deny”" : ""
           onAccepted: root.resolveConfirm(true)
           onRefused: root.resolveConfirm(false)
         }
@@ -1013,6 +1095,7 @@ Panel {
           explanation: root.pendingGrant ? String(root.pendingGrant.reason || "") : ""
           acceptLabel: "[A] Allow"
           refuseLabel: "[D] Deny"
+          spokenHint: root.voiceApproval ? "or say “allow” / “deny”" : ""
           onAccepted: root.resolveGrant(true)
           onRefused: root.resolveGrant(false)
         }
@@ -1295,45 +1378,18 @@ Panel {
               onChanged: function(newValue) { root.selectVoice(newValue) }
             }
 
-            // Ambient "thinking" tone on/off.
-            RowLayout {
-              Layout.fillWidth: true
-              spacing: Style.space(10)
+            SettingSwitch {
+              label: "Thinking sound"
+              detail: "A soft pad while the agent works"
+              on: root.toneEnabled
+              onToggled: root.toggleTone()
+            }
 
-              Text {
-                text: "Thinking sound"
-                color: Qt.alpha(Color.popups.text, 0.7)
-                font.family: Style.font.family
-                font.pixelSize: Style.font.bodySmall
-                Layout.fillWidth: true
-              }
-
-              Rectangle {
-                implicitWidth: Style.space(58)
-                implicitHeight: Style.space(24)
-                radius: height / 2
-                color: root.toneEnabled ? Qt.alpha(root.ember, 0.22)
-                                        : Qt.alpha(Color.popups.text, 0.08)
-                border.width: Math.max(1, Style.normalBorderWidth)
-                border.color: root.toneEnabled ? Qt.alpha(root.ember, 0.6)
-                                               : Qt.alpha(Color.popups.text, 0.2)
-                Behavior on color { ColorAnimation { duration: 150 } }
-
-                Rectangle {
-                  width: Style.space(18); height: width; radius: width / 2
-                  y: (parent.height - height) / 2
-                  x: root.toneEnabled ? parent.width - width - Style.space(3) : Style.space(3)
-                  color: root.toneEnabled ? root.ember : Qt.alpha(Color.popups.text, 0.5)
-                  Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-                  Behavior on color { ColorAnimation { duration: 150 } }
-                }
-
-                MouseArea {
-                  anchors.fill: parent
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.toggleTone()
-                }
-              }
+            SettingSwitch {
+              label: "Answer cards by voice"
+              detail: "Say “allow” or “deny” instead of pressing a key"
+              on: root.voiceApproval
+              onToggled: root.toggleVoiceApproval()
             }
           }
         }

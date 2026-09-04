@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "Decisions.js" as Decisions
 
 // The assistant itself: one conversation, one agent, one voice — shared by
 // every bar it appears on.
@@ -138,6 +139,26 @@ Item {
   // Set when the user allows a grant; once the queue drains the turn
   // auto-continues so they don't have to say "go ahead".
   property bool grantResumePending: false
+
+  // Answering a card out loud, as an alternative to Y/N or a click — this is
+  // a voice assistant, and reaching for the keyboard to say yes is a strange
+  // thing for it to insist on. The card stays exactly as it was; this is a
+  // second way to answer it, not a replacement, and Settings turns it off.
+  //
+  // The agent cannot use this to approve itself. The microphone is only ever
+  // armed by a human gesture (the hotkey, or Enter in the panel), never by
+  // anything the agent does, and the panel does not listen while the reply is
+  // being spoken — so a reply that says the word "allow" is talking to nobody.
+  property bool voiceApproval: true
+
+  readonly property bool awaitingDecision: pendingConfirm !== null || pendingGrant !== null
+
+  // What the current recording is for: a question for the agent, or an answer
+  // to the card on screen while the turn it belongs to waits underneath.
+  property string capture: ""
+  property string capturePhase: ""
+  // Shown under the card when something was heard but was not a yes or a no.
+  property string decisionHint: ""
 
   // The tier-3 card: one specific action, waiting on one specific yes.
   // Unlike a grant, answering it approves nothing for next time — the script
@@ -414,8 +435,11 @@ Item {
   readonly property string statusLine: {
     // A blocked action is the most urgent thing the panel can say: a script
     // is holding the turn open until this is answered.
+    if (decisionHint !== "") return decisionHint
     if (pendingConfirm !== null)
-      return "Waiting on you — Y to allow this once, N to refuse"
+      return voiceApproval && phase !== "listening"
+        ? "Waiting on you — Y or N, or press End and say “allow” / “deny”"
+        : "Waiting on you — Y to allow this once, N to refuse"
     if (phase === "listening") return heardSpeech
       ? "Listening… pause when finished (Enter sends now)"
       : "Listening… speak whenever you're ready"
@@ -440,7 +464,14 @@ Item {
     showPanel()
     turnMode = "new"
     if (payload.say) { say(String(payload.say)); return }
-    if (payload.listen !== false && phase === "idle") startListening()
+    if (payload.listen === false) return
+    // A card is up and the turn behind it is blocked: the hotkey means
+    // "let me answer it", not "start something new".
+    if (awaitingDecision && voiceApproval && phase !== "idle") {
+      listenForDecision()
+      return
+    }
+    if (phase === "idle") startListening()
   }
 
   // Stop every running process and reset turn state. Kept for a hard reset
@@ -466,6 +497,9 @@ Item {
     draft = ""
     grantResumePending = false
     pendingConfirm = null
+    capture = ""
+    capturePhase = ""
+    decisionHint = ""
   }
 
   // Stop whatever is happening right now (the "open panel + Enter" gesture,
@@ -474,6 +508,55 @@ Item {
     if (phase === "listening") stopListening()
     else if (phase === "transcribing" || phase === "thinking") cancelTurn()
     else if (phase === "speaking") stopSpeaking()
+  }
+
+  // Answer the card on screen, if that is what was said. Returns false when
+  // the words were not a decision at all, which leaves the card up and the
+  // utterance free to be treated as ordinary speech.
+  function applySpokenDecision(text) {
+    if (!voiceApproval || !awaitingDecision) return false
+    var verdict = Decisions.decide(text)
+    if (verdict === "") return false
+    // A blocked action outranks a queued capability, the same order the
+    // keyboard uses: something is waiting on this one right now.
+    if (pendingConfirm !== null) resolveConfirm(verdict === "allow")
+    else resolveGrant(verdict === "allow")
+    decisionHint = ""
+    return true
+  }
+
+  // Listen for a yes or no while a turn is blocked on a confirmation card.
+  // The turn keeps running underneath: this borrows the microphone, not the
+  // pipeline, and puts `phase` back where it found it.
+  function listenForDecision() {
+    if (!voiceApproval || !awaitingDecision) return false
+    if (recProc.running || transProc.running) return false
+    capture = "decision"
+    capturePhase = phase
+    decisionHint = ""
+    expectedStop = false
+    micDb = -90
+    heardSpeech = false
+    silenceMs = 0
+    loudStreak = 0
+    listenedMs = 0
+    refreshMic()
+    phase = "listening"
+    recFile = newRecFile()
+    // A yes or no is short; a minute of recording is for a question.
+    recProc.command = [binDir + "/record.sh", recFile, "20"]
+    recProc.running = true
+    return true
+  }
+
+  // Where a decision capture leaves the panel: back in the turn it
+  // interrupted, unless that turn ended while the answer was being spoken.
+  function endDecisionCapture() {
+    var back = capturePhase
+    capture = ""
+    capturePhase = ""
+    transcript = ""
+    phase = (back !== "" && askProc.running) ? back : "idle"
   }
 
   function startListening() {
@@ -492,6 +575,7 @@ Item {
     loudStreak = 0
     listenedMs = 0
     refreshMic()
+    capture = "turn"
     phase = "listening"
     recFile = newRecFile()
     recProc.command = [binDir + "/record.sh", recFile, "60"]
@@ -524,6 +608,9 @@ Item {
     // rather than trusting the dying script to say so keeps a dead question
     // off the panel.
     pendingConfirm = null
+    capture = ""
+    capturePhase = ""
+    decisionHint = ""
     refreshGrants()
   }
 
@@ -549,6 +636,12 @@ Item {
   function submitText(text) {
     var t = clamp(String(text || "").replace(/^\s+|\s+$/g, ""), maxDraftChars)
     if (t === "") return
+    // Typing "allow" answers the card as readily as saying it does.
+    if (applySpokenDecision(t)) {
+      typing = false
+      draft = ""
+      return
+    }
     typing = false
     draft = ""
     if (speakProc.running) speakProc.running = false
@@ -617,7 +710,8 @@ Item {
   Process {
     id: micProc
     command: ["bash", "-c",
-      "jq -r '[(.mic_threshold_db // \"\"), (.mic_end_silence_ms // \"\"), (.tone_enabled // \"\")] | @tsv' " +
+      "jq -r '[(.mic_threshold_db // \"\"), (.mic_end_silence_ms // \"\"), (.tone_enabled // \"\"), " +
+      "(.voice_approval // \"\")] | @tsv' " +
       "\"$HOME/.config/omarchy/computer.json\" 2>/dev/null"]
     stdout: StdioCollector {
       waitForEnd: true
@@ -629,6 +723,8 @@ Item {
         if (!isNaN(sil)) root.endSilenceMs = Math.max(800, Math.min(5000, sil))
         var te = String(parts[2] || "").trim()
         if (te !== "") root.toneEnabled = (te !== "false")
+        var va = String(parts[3] || "").trim()
+        if (va !== "") root.voiceApproval = (va !== "false")
       }
     }
   }
@@ -754,6 +850,7 @@ Item {
       return
     }
     if (ev.kind === "confirm-done") {
+      decisionHint = ""
       if (pendingConfirm && pendingConfirm.id === String(ev.id || "")) pendingConfirm = null
       activityModel.append({
         kind: "meta",
@@ -834,12 +931,37 @@ Item {
       if (root.expectedStop) return
       // Whisper hallucinates lone punctuation on silence; treat it as nothing.
       var heard = root.transcript.replace(/[^a-zA-Z0-9]/g, "")
+
+      // An answer to the card, not a question for the agent: resolve it and
+      // hand the panel back to whatever it was doing.
+      if (root.capture === "decision") {
+        var answered = heard !== "" && root.applySpokenDecision(root.transcript)
+        if (!answered) {
+          root.decisionHint = heard === ""
+            ? "I didn't catch that — say “allow” or “deny”, or use Y / N"
+            : "That wasn't a yes or a no — say “allow” or “deny”, or use Y / N"
+        }
+        root.endDecisionCapture()
+        return
+      }
+
       if (exitCode !== 0 || heard === "") {
         root.transcript = ""
         root.error = "I didn't catch that"
         root.phase = "idle"
         return
       }
+
+      // Idle with a card waiting: "allow" answers it instead of becoming the
+      // next question. Anything else is a question, and the card stays.
+      if (root.applySpokenDecision(root.transcript)) {
+        root.transcript = ""
+        root.capture = ""
+        root.phase = "idle"
+        return
+      }
+
+      root.capture = ""
       root.phase = "thinking"
       askProc.command = [root.binDir + "/ask.sh", root.transcript, root.turnMode]
       askProc.running = true
@@ -977,6 +1099,13 @@ Item {
 
   Process {
     id: setModelProc
+  }
+
+  function toggleVoiceApproval() {
+    voiceApproval = !voiceApproval
+    setConfigProc.command = [binDir + "/config-set.sh", "voice_approval",
+                             voiceApproval ? "true" : "false"]
+    setConfigProc.running = true
   }
 
   function toggleTone() {

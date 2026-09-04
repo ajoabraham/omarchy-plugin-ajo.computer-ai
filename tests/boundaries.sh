@@ -85,6 +85,17 @@ else
   note "unpack: nothing was written outside the destination"
 fi
 
+echo "spoken approvals only answer when they are unambiguous:"
+if command -v node >/dev/null 2>&1; then
+  if node "$(dirname "$0")/decisions.js"; then
+    note "decisions: phrase matching behaves"
+  else
+    lose "decisions: phrase matching regressed"
+  fi
+else
+  printf '  --   decisions: skipped (node not installed)\n'
+fi
+
 echo "a finished turn closes its output:"
 # The panel reads the answer to EOF (StdioCollector waitForEnd), so anything
 # that outlives the turn while holding its stdout — a watchdog's sleep, say —
