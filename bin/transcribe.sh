@@ -39,14 +39,45 @@ trap cleanup EXIT
 ffmpeg -hide_banner -loglevel error -f s16le -ar 16000 -ac 1 -i "$raw" -y "$wav" </dev/null || exit 1
 
 run_stt() {
-  voxtype --model "$1" transcribe "$wav" 2>/dev/null \
-    | sed -e 's/\x1b\[[0-9;]*m//g' \
-    | grep -vE '^(Loading audio file|Audio format|Processing )' \
+  local out
+  out=$(voxtype --model "$1" transcribe "$wav" 2>/dev/null | sed -e 's/\x1b\[[0-9;]*m//g')
+
+  # voxtype's own summary line is authoritative — it carries the transcript in
+  # quotes, and an empty pair of quotes means it heard nothing. Read it
+  # directly, because the fallback below cannot tell silence from success:
+  # with nothing transcribed, the last non-empty line IS the log record, and
+  # the panel would hand the agent a timestamp and the word INFO as if the
+  # user had said it. (Which it did: an unanswered "say something" turn came
+  # back as `2026-09-04T23:31:49Z INFO Transcription completed in 0.40s: ""`.)
+  local summary
+  summary=$(printf '%s\n' "$out" | grep -a 'Transcription completed in' | tail -1)
+  if [ -n "$summary" ]; then
+    printf '%s' "$summary" | sed -n 's/.*Transcription completed in [^:]*: "\(.*\)"[[:space:]]*$/\1/p'
+    return
+  fi
+
+  # No summary line (a different voxtype build): last non-empty line that is
+  # neither progress noise nor a timestamped log record.
+  printf '%s\n' "$out" \
+    | grep -vE '^(Loading audio file|Audio format|Processing |whisper_|ggml_|[0-9]{4}-[0-9]{2}-[0-9]{2}T)' \
     | awk 'NF { last = $0 } END { if (last) print last }'
 }
 
+# Whisper does not return nothing for silence; it returns its favourite
+# hallucinations. Treating these as speech costs a whole agent turn spent
+# answering a word the user never said — and, now that a card can be
+# answered out loud, it is noise arriving exactly when the panel is waiting
+# for a yes or a no.
+is_silence_artifact() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '.,!?[]() ')" in
+    ''|you|thankyou|thanksforwatching|blank_audio|silence|bye) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 text=$(run_stt "$model")
-if [ -z "$text" ] && [ "$model" != "base.en" ]; then
+if is_silence_artifact "$text" && [ "$model" != "base.en" ]; then
   text=$(run_stt "base.en")
 fi
+is_silence_artifact "$text" && text=""
 [ -n "$text" ] && printf '%s\n' "$text"
