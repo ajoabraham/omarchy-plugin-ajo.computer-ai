@@ -21,4 +21,11 @@ case "$verdict" in
 esac
 
 mkdir -p "$state"
-printf '%s' "$verdict" > "$state/confirm-$id"
+
+# Written whole, then renamed into place. A plain redirect creates the file
+# empty and fills it a moment later; confirm.sh polls for existence, so that
+# gap is a window where a Y is read as an empty verdict and reported back to
+# the agent as a refusal. A rename has no such window.
+tmp=$(mktemp "$state/.confirm.XXXXXX")
+printf '%s' "$verdict" > "$tmp"
+mv -f "$tmp" "$state/confirm-$id"

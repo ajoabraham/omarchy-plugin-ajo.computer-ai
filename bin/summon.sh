@@ -7,4 +7,5 @@
 # runs for the whole shell session, so this doesn't launch anything — it just
 # opens the drop-down via IPC. The popup is a keyboard-focused layer surface,
 # so Enter/Esc work immediately with no window-focus dance.
+set -u
 exec omarchy-shell ajo.computer-ai summon '{"listen": true}'

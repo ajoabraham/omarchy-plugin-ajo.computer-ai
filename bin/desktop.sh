@@ -37,6 +37,17 @@ activity
 docker
 '
 
+# Compared in bash rather than with grep: an app name starting with "-" would
+# otherwise be read by grep as an option, and `--help` would "match" the list.
+known() { # $1 = app name
+  local line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [ "$line" = "$1" ] && return 0
+  done <<< "$known_apps"
+  return 1
+}
+
 usage() {
   cat >&2 <<'USAGE'
 usage: desktop.sh launch <app> [url]
@@ -58,7 +69,7 @@ case "$cmd" in
     # A desktop-entry name, not a command line: no spaces, no separators, no
     # path traversal, nothing a shell would find interesting.
     case "$app" in
-      *[!a-zA-Z0-9._-]*|''|.*|*..*)
+      *[!a-zA-Z0-9._-]*|''|.*|-*|*..*)
         echo "desktop: '$app' is not a valid app name" >&2; exit 2 ;;
     esac
     [ "${#app}" -le 64 ] || { echo "desktop: app name too long" >&2; exit 2; }
@@ -74,7 +85,7 @@ case "$cmd" in
       args+=("$extra")
     fi
 
-    if ! printf '%s\n' "$known_apps" | grep -qxF "$app"; then
+    if ! known "$app"; then
       "$self/confirm.sh" "launch $app" "The assistant wants to launch: $app" || exit 3
     fi
     exec omarchy launch "${args[@]}"

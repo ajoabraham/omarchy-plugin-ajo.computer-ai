@@ -28,10 +28,16 @@
 # Not pre-approved: it changes system audio and listening behaviour, so it
 # runs behind a one-time panel grant like the other privileged helpers here.
 set -u
+umask 077
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cfg="$HOME/.config/omarchy/computer.json"
-recfile="${XDG_RUNTIME_DIR:-/tmp}/computer-ai-question.wav"
+# The last turn's capture, retired here by transcribe.sh. The state
+# directory is the fallback when there is no runtime directory — never /tmp,
+# which is shared and would make this microphone audio readable by anyone
+# on the machine.
+rec_dir="${XDG_RUNTIME_DIR:-$HOME/.local/share/computer-ai/state}"
+recfile="$rec_dir/computer-ai-last.raw"
 src='@DEFAULT_AUDIO_SOURCE@'
 
 die() { echo "mic-calibrate: $*" >&2; exit 2; }
@@ -73,12 +79,22 @@ case "$cmd" in
   analyze|auto)
     secs="${3:-}"
     if [ "${2:-last}" = "fresh" ]; then
-      pcm=$(mktemp); trap 'rm -f "$pcm"' EXIT
+      # In the private runtime directory, not /tmp: this is microphone audio,
+      # and record.sh refuses a shared temp path for exactly that reason.
+      pcm=$(umask 077; mktemp "$rec_dir/computer-ai-fresh.XXXXXX")
+      trap 'rm -f "$pcm"' EXIT
       "$script_dir/record.sh" "$pcm" "${secs:-5}" >/dev/null 2>&1
       srclabel="a fresh ${secs:-5}s capture"
     else
       pcm="${2:-$recfile}"
       [ "$pcm" = "last" ] && pcm="$recfile"
+      # Only captures this plugin made, in the directory it made them in.
+      # Otherwise `analyze <path>` is a way to point the measurement at any
+      # file on the machine and read its levels back out loud.
+      case "$pcm" in
+        "$rec_dir"/computer-ai-*) ;;
+        *) die "analyze only reads this plugin's own captures in $rec_dir" ;;
+      esac
       srclabel="the last turn's audio"
     fi
     [ -s "$pcm" ] || die "no audio to analyze at $pcm (speak a turn first, or use: analyze fresh 5)"

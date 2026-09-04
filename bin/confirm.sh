@@ -54,7 +54,16 @@ drop_pending() {
 }
 
 cleanup() { rm -f "$verdict_file"; drop_pending; }
-trap 'cleanup; exit 143' TERM INT HUP
+
+# Cancelled mid-question: the card has to come down, or it sits on the panel
+# waiting for an answer that nothing is listening for any more.
+on_stop() {
+  cleanup
+  detail="cancelled"
+  emit confirm-done
+  exit 143
+}
+trap on_stop TERM INT HUP
 
 emit confirm queue
 
@@ -71,12 +80,23 @@ deadline=$(( $(date +%s) + timeout_s ))
 while [ "$(date +%s)" -lt "$deadline" ]; do
   if [ -f "$verdict_file" ]; then
     verdict=$(head -c 8 "$verdict_file" 2>/dev/null | tr -dc 'a-z')
-    break
+    # Only a complete answer ends the wait. Anything else means we caught a
+    # write in progress, so keep polling rather than reporting a refusal the
+    # user never gave.
+    case "$verdict" in
+      allow|deny) break ;;
+      *) verdict="" ;;
+    esac
   fi
   sleep 0.25
 done
 
 cleanup
+case "$verdict" in
+  allow) detail="allowed" ;;
+  deny)  detail="declined" ;;
+  *)     detail="no answer in ${timeout_s}s" ;;
+esac
 emit confirm-done
 
 case "$verdict" in

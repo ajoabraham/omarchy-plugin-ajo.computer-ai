@@ -155,6 +155,11 @@ commands. Know the boundaries:
   redirects are followed one at a time and re-checked at each hop rather
   than by `curl --location`, ambient `~/.curlrc` and proxy settings are
   ignored, and size and time are capped.
+- The boundary is tested, not just described: `bash tests/boundaries.sh`
+  checks that the wrappers refuse hostile argv, that disruptive actions do
+  not happen without a human yes, that a hostile archive cannot write outside
+  its destination, and that a cancelled or timed-out turn leaves nothing
+  running.
 - Voice is an input channel, and so is everything the agent reads: pages,
   mail and browser content all arrive in the same context as your words.
   That is why the boundaries above are enforced by wrappers and gates rather
@@ -175,8 +180,16 @@ commands. Know the boundaries:
 - Private by default: state, memory and settings live in `0700` directories
   with `0600` files, durable state is replaced by atomic rename, and the
   microphone capture goes to an unguessable name inside your own runtime
-  directory — never `/tmp` — and is deleted as soon as it has been
-  transcribed.
+  directory — never `/tmp`.
+- One recording is kept, deliberately. Once a turn is transcribed its capture
+  is renamed to a single fixed name (`computer-ai-last.raw`, mode `0600`, in
+  that same private directory), replacing the previous turn's — because
+  `bin/mic-calibrate.sh` tunes the microphone by measuring *the sentence you
+  just spoke*, which is what lets it calibrate without asking you to "speak
+  on cue". So your most recent utterance is on disk until the next one
+  replaces it or you log out. `mic-calibrate.sh` will only read captures from
+  that directory. If you would rather keep nothing, delete the file — the
+  next turn works fine without it, and only calibration notices.
 - Audio is processed locally (Voxtype/whisper STT, Piper/Kokoro TTS);
   transcribed text goes only to the agent CLI you selected.
 

@@ -70,6 +70,12 @@ while :; do
     exit 1
   fi
   IFS=$'\t' read -r host port ip class < "$tmpd/guard"
+  # curl wants an IPv6 literal in brackets here; an IPv4 address must not
+  # have them. Without this an IPv6-only host is unreachable.
+  case "$ip" in
+    *:*) pin="[$ip]" ;;
+    *)   pin="$ip" ;;
+  esac
 
   if [ "$class" != "public" ]; then
     # Not a standing power: this destination, this time.
@@ -86,7 +92,7 @@ while :; do
   meta=$(curl -q -sS --compressed \
     --proto '=http,https' \
     --noproxy '*' \
-    --resolve "$host:$port:$ip" \
+    --resolve "$host:$port:$pin" \
     --max-redirs 0 \
     --connect-timeout 10 --max-time 25 \
     --max-filesize 8000000 \

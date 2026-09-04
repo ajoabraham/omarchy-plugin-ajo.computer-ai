@@ -43,9 +43,12 @@ Item {
     return (xdg && xdg !== "") ? xdg : (home + "/.local/share/computer-ai/state")
   }
 
-  // A fresh unguessable name per turn, and transcribe.sh deletes it as soon
-  // as there is a transcript. Not a secret in itself — the directory is what
-  // keeps others out — but it removes the pre-created-symlink race entirely.
+  // A fresh unguessable name per turn — not a secret in itself, the 0700
+  // directory is what keeps others out, but it removes the
+  // pre-created-symlink race while the file is being written. Once there is
+  // a transcript, transcribe.sh renames it to a single fixed name beside it,
+  // because mic-calibrate.sh measures the turn you just spoke; so exactly
+  // one capture is at rest at a time, and never more.
   property string recFile: ""
 
   function newRecFile() {
@@ -516,6 +519,11 @@ Item {
     if (askProc.running) askProc.running = false
     phase = "idle"
     error = ""
+    // Whatever was blocked on a confirmation has just been killed with the
+    // rest of the turn, so the card is answering nobody. Clearing it here
+    // rather than trusting the dying script to say so keeps a dead question
+    // off the panel.
+    pendingConfirm = null
     refreshGrants()
   }
 
@@ -747,6 +755,11 @@ Item {
     }
     if (ev.kind === "confirm-done") {
       if (pendingConfirm && pendingConfirm.id === String(ev.id || "")) pendingConfirm = null
+      activityModel.append({
+        kind: "meta",
+        label: clamp(ev.label, 120),
+        detail: clamp(ev.detail, maxActivityFieldChars)
+      })
       return
     }
     // usage/limits/summary are state, not steps — they update the numbers
@@ -845,6 +858,7 @@ Item {
       }
     }
     onExited: function(exitCode) {
+      root.pendingConfirm = null
       if (root.expectedStop) { root.refreshGrants(); return }
       if (exitCode !== 0 || root.response === "") {
         root.error = root.agentLabel + " didn't answer — try again"

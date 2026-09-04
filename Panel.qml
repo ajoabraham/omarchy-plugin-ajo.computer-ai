@@ -273,6 +273,116 @@ Panel {
     }
   }
 
+  // One approval card, used for both gates below. Long requests scroll
+  // inside the card rather than pushing the rest of the panel around, and
+  // the height cap is what keeps a wordy reason from taking over the popup.
+  component GateCard: Rectangle {
+    id: gate
+
+    property string title: ""
+    property color accentColor: Color.accent
+    property color fillColor: Qt.alpha(Color.accent, 0.10)
+    property color edgeColor: Qt.alpha(Color.accent, 0.45)
+    property string subject: ""
+    property string explanation: ""
+    property string footnote: ""
+    property string acceptLabel: ""
+    property string refuseLabel: ""
+
+    signal accepted()
+    signal refused()
+
+    Layout.fillWidth: true
+    opacity: visible ? 1 : 0
+    Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+    implicitHeight: Math.min(gateCol.implicitHeight + Style.space(24), Style.space(170))
+    radius: Style.cornerRadius
+    color: gate.fillColor
+    border.color: gate.edgeColor
+    border.width: Math.max(1, Style.normalBorderWidth)
+
+    Flickable {
+      anchors.fill: parent
+      anchors.margins: Style.space(12)
+      contentWidth: width
+      contentHeight: gateCol.implicitHeight
+      clip: true
+      boundsBehavior: Flickable.StopAtBounds
+
+      ColumnLayout {
+        id: gateCol
+        width: parent.width
+        spacing: Style.space(6)
+
+        Text {
+          text: gate.title
+          color: gate.accentColor
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          font.bold: true
+          font.letterSpacing: 2
+        }
+
+        Text {
+          text: gate.subject
+          color: Color.popups.text
+          font.family: Style.font.family
+          font.pixelSize: Style.font.body
+          wrapMode: Text.WrapAnywhere
+          Layout.fillWidth: true
+        }
+
+        Text {
+          visible: text !== ""
+          text: gate.explanation
+          color: Qt.alpha(Color.popups.text, 0.6)
+          font.family: Style.font.family
+          font.pixelSize: Style.font.bodySmall
+          wrapMode: Text.Wrap
+          Layout.fillWidth: true
+        }
+
+        Text {
+          visible: text !== ""
+          text: gate.footnote
+          color: Qt.alpha(Color.popups.text, 0.4)
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          font.italic: true
+        }
+
+        RowLayout {
+          spacing: Style.space(16)
+
+          Text {
+            text: gate.acceptLabel
+            color: gate.accentColor
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: gate.accepted()
+            }
+          }
+
+          Text {
+            text: gate.refuseLabel
+            color: Qt.alpha(Color.popups.text, 0.7)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: gate.refused()
+            }
+          }
+        }
+      }
+    }
+  }
+
   // --- popup ---------------------------------------------------------------
 
   KeyboardPanel {
@@ -869,187 +979,42 @@ Panel {
           }
         }
 
-        // Confirmation card: one action, right now, waiting on this answer.
-        // Distinct from the permission card below in both look and wording,
-        // because the decisions are different — this one approves a single
-        // act and is forgotten; that one grants a standing capability.
-        Rectangle {
+        // The two gates, one shape. A tinted card with a title, the thing
+        // being asked about, why, and two keyed choices — that is both the
+        // standing permission grant and the one-shot action confirmation.
+        // They differ in wording, colour and consequence, which is what the
+        // properties carry; building them twice only made it possible for
+        // them to drift apart.
+        GateCard {
           visible: root.pendingConfirm !== null
-          opacity: root.pendingConfirm !== null ? 1 : 0
-          Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-          Layout.fillWidth: true
-          implicitHeight: Math.min(confirmCol.implicitHeight + Style.space(24), Style.space(170))
-          radius: Style.cornerRadius
-          color: Qt.alpha(root.rust, 0.12)
-          border.color: Qt.alpha(root.ember, 0.55)
-          border.width: Math.max(1, Style.normalBorderWidth)
-
-          Flickable {
-            anchors.fill: parent
-            anchors.margins: Style.space(12)
-            contentWidth: width
-            contentHeight: confirmCol.implicitHeight
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-
-            ColumnLayout {
-              id: confirmCol
-              width: parent.width
-              spacing: Style.space(6)
-
-              Text {
-                text: "CONFIRM THIS ACTION"
-                color: root.ember
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 2
-              }
-
-              Text {
-                text: root.pendingConfirm ? String(root.pendingConfirm.label || "") : ""
-                color: Color.popups.text
-                font.family: Style.font.family
-                font.pixelSize: Style.font.body
-                wrapMode: Text.WrapAnywhere
-                Layout.fillWidth: true
-              }
-
-              Text {
-                visible: text !== ""
-                text: root.pendingConfirm ? String(root.pendingConfirm.detail || "") : ""
-                color: Qt.alpha(Color.popups.text, 0.6)
-                font.family: Style.font.family
-                font.pixelSize: Style.font.bodySmall
-                wrapMode: Text.Wrap
-                Layout.fillWidth: true
-              }
-
-              Text {
-                text: "This one time only — it is not remembered."
-                color: Qt.alpha(Color.popups.text, 0.4)
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-                font.italic: true
-              }
-
-              RowLayout {
-                spacing: Style.space(16)
-
-                Text {
-                  text: "[Y] Do it"
-                  color: root.ember
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.bodySmall
-                  font.bold: true
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.resolveConfirm(true)
-                  }
-                }
-
-                Text {
-                  text: "[N] No"
-                  color: Qt.alpha(Color.popups.text, 0.7)
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.bodySmall
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.resolveConfirm(false)
-                  }
-                }
-              }
-            }
-          }
+          title: "CONFIRM THIS ACTION"
+          accentColor: root.ember
+          fillColor: Qt.alpha(root.rust, 0.12)
+          edgeColor: Qt.alpha(root.ember, 0.55)
+          subject: root.pendingConfirm ? String(root.pendingConfirm.label || "") : ""
+          explanation: root.pendingConfirm ? String(root.pendingConfirm.detail || "") : ""
+          footnote: "This one time only — it is not remembered."
+          acceptLabel: "[Y] Do it"
+          refuseLabel: "[N] No"
+          onAccepted: root.resolveConfirm(true)
+          onRefused: root.resolveConfirm(false)
         }
 
-        // Permission-request card: the human gate for privilege escalation.
-        // Capped in height; long requests scroll inside the card without
-        // moving the rest of the panel.
-        Rectangle {
+        // The human gate for privilege escalation. Unlike the card above,
+        // saying yes here is durable: it writes a rule that applies from the
+        // next question until the user removes it.
+        GateCard {
           visible: root.pendingGrant !== null
-          opacity: root.pendingGrant !== null ? 1 : 0
-          Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-          Layout.fillWidth: true
-          implicitHeight: Math.min(grantCol.implicitHeight + Style.space(24), Style.space(170))
-          radius: Style.cornerRadius
-          color: Qt.alpha(Color.accent, 0.10)
-          border.color: Qt.alpha(Color.accent, 0.45)
-          border.width: Math.max(1, Style.normalBorderWidth)
-
-          Flickable {
-            anchors.fill: parent
-            anchors.margins: Style.space(12)
-            contentWidth: width
-            contentHeight: grantCol.implicitHeight
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-
-          ColumnLayout {
-            id: grantCol
-            width: parent.width
-            spacing: Style.space(6)
-
-            Text {
-              text: "PERMISSION REQUEST"
-              color: Color.accent
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
-              font.bold: true
-              font.letterSpacing: 2
-            }
-
-            Text {
-              text: root.pendingGrant ? String(root.pendingGrant.rule || "") : ""
-              color: Color.popups.text
-              font.family: Style.font.family
-              font.pixelSize: Style.font.body
-              wrapMode: Text.WrapAnywhere
-              Layout.fillWidth: true
-            }
-
-            Text {
-              visible: root.pendingGrant !== null && String(root.pendingGrant.reason || "") !== ""
-              text: root.pendingGrant ? String(root.pendingGrant.reason || "") : ""
-              color: Qt.alpha(Color.popups.text, 0.6)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.Wrap
-              Layout.fillWidth: true
-            }
-
-            RowLayout {
-              spacing: Style.space(16)
-
-              Text {
-                text: "[A] Allow"
-                color: Color.accent
-                font.family: Style.font.family
-                font.pixelSize: Style.font.bodySmall
-                font.bold: true
-                MouseArea {
-                  anchors.fill: parent
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.resolveGrant(true)
-                }
-              }
-
-              Text {
-                text: "[D] Deny"
-                color: Qt.alpha(Color.popups.text, 0.7)
-                font.family: Style.font.family
-                font.pixelSize: Style.font.bodySmall
-                MouseArea {
-                  anchors.fill: parent
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.resolveGrant(false)
-                }
-              }
-            }
-          }
-          }
+          title: "PERMISSION REQUEST"
+          accentColor: Color.accent
+          fillColor: Qt.alpha(Color.accent, 0.10)
+          edgeColor: Qt.alpha(Color.accent, 0.45)
+          subject: root.pendingGrant ? String(root.pendingGrant.rule || "") : ""
+          explanation: root.pendingGrant ? String(root.pendingGrant.reason || "") : ""
+          acceptLabel: "[A] Allow"
+          refuseLabel: "[D] Deny"
+          onAccepted: root.resolveGrant(true)
+          onRefused: root.resolveGrant(false)
         }
 
         Text {

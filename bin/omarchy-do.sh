@@ -87,10 +87,22 @@ for a in "$@"; do
 done
 
 first="${1:-}"; second="${2:-}"
+# An empty first argument would otherwise match the blank line the tables
+# begin with, and pass straight through as an allowed verb.
+[ -n "$first" ] || { usage; exit 2; }
 probe="$first${second:+ $second}"
 
+# Pure bash, deliberately: passing an untrusted value to grep as its pattern
+# means a value starting with "-" is parsed as an option instead — `--help`
+# made grep print its usage and exit 0, which this function then read as "the
+# verb is in the table". Nothing here is a subprocess or an option.
 matches() { # $1 = table, $2 = probe
-  printf '%s\n' "$1" | grep -qxF "$2"
+  local line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [ "$line" = "$2" ] && return 0
+  done <<< "$1"
+  return 1
 }
 
 command -v omarchy >/dev/null 2>&1 || { echo "omarchy: command not found" >&2; exit 127; }

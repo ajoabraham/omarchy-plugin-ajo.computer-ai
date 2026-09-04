@@ -114,7 +114,12 @@ emit_levels() { # $1 = wav — CHUNK header + per-50ms RMS lines
 
 # Bound before anything is split, synthesized or spoken. The panel clamps
 # too; this is the producer-side guard for any other caller (IPC `say`).
-text=$(printf '%s' "${1:-}" | head -c "${COMPUTER_SPEAK_MAX_BYTES:-8000}")
+# Bash substring extraction, so a cut never lands mid-character the way a
+# byte count would — this text goes to a speech synthesizer.
+# Two steps on purpose: ${1:0:N} on an unset $1 aborts under `set -u`,
+# which would turn "nothing to say" into a crash.
+text="${1-}"
+text="${text:0:${COMPUTER_SPEAK_MAX_CHARS:-8000}}"
 [ -n "$text" ] || exit 0
 
 mapfile -t chunks < <(split_sentences "$text")

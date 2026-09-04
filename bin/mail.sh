@@ -63,12 +63,15 @@ if [ "${1:-}" = "setup" ]; then
   term=""; for t in ghostty alacritty foot kitty; do have "$t" && { term="$t"; break; }; done
   [ -n "$term" ] || { echo "mail: no terminal to open the setup window." >&2; exit 2; }
   title="Computer · email setup"
-  inner="'$script_dir/mail.sh' configure; echo; read -n1 -r -p 'Press any key to close…'"
+  # Values reach bash as arguments, never spliced into the -c string: a path
+  # or account name containing a quote would otherwise end the quoting and
+  # the rest would run as code.
+  inner='"$0" configure; echo; read -n1 -r -p "Press any key to close…"'
   case "$term" in
-    ghostty)   launch=(ghostty --title="$title" -e bash -lc "$inner") ;;
-    alacritty) launch=(alacritty --title "$title" -e bash -lc "$inner") ;;
-    foot)      launch=(foot --title="$title" bash -lc "$inner") ;;
-    kitty)     launch=(kitty --title "$title" bash -lc "$inner") ;;
+    ghostty)   launch=(ghostty --title="$title" -e bash -lc "$inner" "$script_dir/mail.sh") ;;
+    alacritty) launch=(alacritty --title "$title" -e bash -lc "$inner" "$script_dir/mail.sh") ;;
+    foot)      launch=(foot --title="$title" bash -lc "$inner" "$script_dir/mail.sh") ;;
+    kitty)     launch=(kitty --title "$title" bash -lc "$inner" "$script_dir/mail.sh") ;;
   esac
   if have uwsm-app; then setsid uwsm-app -- "${launch[@]}" >/dev/null 2>&1 &
   else setsid "${launch[@]}" >/dev/null 2>&1 & fi
@@ -264,12 +267,12 @@ if [ "$mode" = "send" ]; then
   term=""; for t in ghostty alacritty foot kitty; do have "$t" && { term="$t"; break; }; done
   [ -n "$term" ] || { echo "mail: no terminal for the review window." >&2; rm -f "$f"; exit 2; }
   title="Computer · review email ($from)"
-  inner="'$script_dir/mail.sh' review '$f' '$acct' '$from'"
+  inner='exec "$0" review "$1" "$2" "$3"'
   case "$term" in
-    ghostty)   launch=(ghostty --title="$title" -e bash -lc "$inner") ;;
-    alacritty) launch=(alacritty --title "$title" -e bash -lc "$inner") ;;
-    foot)      launch=(foot --title="$title" bash -lc "$inner") ;;
-    kitty)     launch=(kitty --title "$title" bash -lc "$inner") ;;
+    ghostty)   launch=(ghostty --title="$title" -e bash -lc "$inner" "$script_dir/mail.sh" "$f" "$acct" "$from") ;;
+    alacritty) launch=(alacritty --title "$title" -e bash -lc "$inner" "$script_dir/mail.sh" "$f" "$acct" "$from") ;;
+    foot)      launch=(foot --title="$title" bash -lc "$inner" "$script_dir/mail.sh" "$f" "$acct" "$from") ;;
+    kitty)     launch=(kitty --title "$title" bash -lc "$inner" "$script_dir/mail.sh" "$f" "$acct" "$from") ;;
   esac
   if have uwsm-app; then setsid uwsm-app -- "${launch[@]}" >/dev/null 2>&1 &
   else setsid "${launch[@]}" >/dev/null 2>&1 & fi

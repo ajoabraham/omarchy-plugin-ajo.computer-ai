@@ -77,6 +77,12 @@ fi
 activity_file="$state_dir/activity.jsonl"
 : > "$activity_file"
 
+# Verdict files are removed by the script that waited for them, but a
+# verdict written just after one gave up has nobody left to collect it.
+# Sweep anything older than an hour so the state directory does not silently
+# accumulate answers to questions no one remembers asking.
+find "$state_dir" -maxdepth 1 -name 'confirm-*' -mmin +60 -delete 2>/dev/null || true
+
 memory=$(head -c 4000 "$mem_dir/MEMORY.md" 2>/dev/null)
 now=$(date '+%A, %B %d %Y, %H:%M')
 
@@ -357,24 +363,23 @@ turn_pgid=""
 deadline_pid=""
 answer_rc=1
 
-kill_turn() {
-  [ -n "$turn_pgid" ] || return 0
-  kill -TERM "-$turn_pgid" 2>/dev/null || true
-  # Give the agent a moment to unwind (it may be mid-write), then insist.
+# Signal a whole process group and wait for it to actually go. Both the turn
+# and the watchdog below lead their own group (that is what `set -m` buys),
+# so the negative pid reaches every descendant rather than just the leader.
+end_group() {
+  [ -n "$1" ] || return 0
+  kill -TERM "-$1" 2>/dev/null || true
   local i
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    kill -0 "-$turn_pgid" 2>/dev/null || return 0
+    kill -0 "-$1" 2>/dev/null || return 0
     sleep 0.2
   done
-  kill -KILL "-$turn_pgid" 2>/dev/null || true
+  kill -KILL "-$1" 2>/dev/null || true
 }
 
 on_stop() {
-  kill_turn
-  # The deadline watchdog is sleeping for the rest of the turn's allowance.
-  # Without this it would hold the reap below open for the full ten minutes,
-  # and the panel would keep showing a stopped turn as still running.
-  [ -n "$deadline_pid" ] && kill "$deadline_pid" 2>/dev/null
+  end_group "$turn_pgid"
+  end_group "$deadline_pid"
   # Reap what is left so this script does not exit ahead of its children.
   wait 2>/dev/null || true
   exit 143
@@ -390,6 +395,12 @@ case "$timeout_s" in ''|*[!0-9]*) timeout_s=600 ;; esac
 turn_pgid=$!
 
 if [ "$timeout_s" -gt 0 ]; then
+  # >/dev/null matters as much as the timer does: this subshell would
+  # otherwise inherit the answer pipe, and its `sleep` — a child that
+  # outlives a signal aimed at the subshell alone — would hold that pipe
+  # open long after the turn finished. The panel reads the answer to EOF, so
+  # a stray writer means every turn appears to hang for the rest of the
+  # timeout. Hence both: no inherited pipe, and a group-wide kill.
   (
     sleep "$timeout_s"
     kill -0 "-$turn_pgid" 2>/dev/null || exit 0
@@ -398,7 +409,7 @@ if [ "$timeout_s" -gt 0 ]; then
     kill -TERM "-$turn_pgid" 2>/dev/null || true
     sleep 2
     kill -KILL "-$turn_pgid" 2>/dev/null || true
-  ) &
+  ) >/dev/null 2>&1 &
   deadline_pid=$!
 fi
 
@@ -406,7 +417,8 @@ wait "$turn_pgid"
 answer_rc=$?
 turn_pgid=""
 
-[ -n "$deadline_pid" ] && kill "$deadline_pid" 2>/dev/null
+end_group "$deadline_pid"
+deadline_pid=""
 wait 2>/dev/null || true
 
 if [ "$answer_rc" = 0 ]; then

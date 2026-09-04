@@ -13,12 +13,30 @@ umask 077
 cfg="$HOME/.config/omarchy/computer.json"
 model=$(jq -r '.stt_model // "tiny.en"' "$cfg" 2>/dev/null)
 
+raw="${1:-}"
+[ -n "$raw" ] || { echo "usage: transcribe.sh <raw-pcm-file>" >&2; exit 2; }
+
+# The panel names each capture unpredictably, which is what keeps a shared
+# directory from being a problem while it is being written. Afterwards
+# exactly one capture is kept, under a fixed name beside it, because
+# mic-calibrate.sh measures the turn the user just spoke — so this is a
+# rename, not a copy, and never a second file left lying around.
+keep="$(dirname "$raw")/computer-ai-last.raw"
+
 wav=$(mktemp --suffix=.wav)
-# Both the converted wav and the raw capture go at the end of this script:
-# the recording has served its purpose once there is a transcript, and it is
-# the most sensitive thing this pipeline touches.
-trap 'rm -f "$wav" "$1"' EXIT
-ffmpeg -hide_banner -loglevel error -f s16le -ar 16000 -ac 1 -i "$1" -y "$wav" </dev/null || exit 1
+# The converted wav is scratch and goes unconditionally; the capture is
+# retired to $keep on the way out, replacing the previous turn's.
+cleanup() {
+  rm -f "$wav"
+  if [ -f "$raw" ]; then
+    # Belt and braces: record.sh creates this under umask 077, but the file
+    # that survives a turn is microphone audio and gets an explicit mode.
+    chmod 600 "$raw" 2>/dev/null || true
+    mv -f "$raw" "$keep" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+ffmpeg -hide_banner -loglevel error -f s16le -ar 16000 -ac 1 -i "$raw" -y "$wav" </dev/null || exit 1
 
 run_stt() {
   voxtype --model "$1" transcribe "$wav" 2>/dev/null \
