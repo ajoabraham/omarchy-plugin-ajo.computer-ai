@@ -22,6 +22,9 @@
 # COMPUTER_ACTIVITY_FILE while they work; the panel tails it live (Ctrl+I).
 # It is truncated here, so the file always holds exactly this turn.
 set -u
+# Everything this turn writes — transcripts in the activity log, the
+# conversation pointer, the permission policy — is private to the user.
+umask 077
 plugin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cfg="$HOME/.config/omarchy/computer.json"
 data_dir="$HOME/.local/share/computer-ai"
@@ -32,12 +35,44 @@ export PATH="$HOME/.local/share/mise/shims:$HOME/.grok/bin:$HOME/.local/bin:$PAT
 cd "$HOME"
 
 mkdir -p "$mem_dir" "$state_dir"
+chmod 700 "$data_dir" "$mem_dir" "$state_dir" 2>/dev/null || true
 [ -f "$mem_dir/MEMORY.md" ] || printf '# Computer memory index\n' > "$mem_dir/MEMORY.md"
 # First run: seed the user's permission policy from the shipped defaults
 # (never overwritten afterwards — apply-grant.sh appends user-approved rules
 # to the live copy, which is user data and stays out of the repo).
 if [ ! -f "$settings_file" ]; then
   sed "s|__PLUGIN_DIR__|$plugin_dir|g" "$plugin_dir/defaults/permissions.json" > "$settings_file"
+fi
+chmod 600 "$settings_file" 2>/dev/null || true
+
+# --- policy migration ------------------------------------------------------
+#
+# The live policy is user data and is never overwritten, so an install from
+# before the wrappers existed would keep its pre-approved `Bash(omarchy:*)`,
+# `Bash(uwsm-app:*)` and `Bash(hyprctl:*)` for good — and each of those is a
+# general-purpose launcher, which makes every other rule in the file
+# decorative. Retire them once, adding the narrow wrapper rules that replace
+# them, and stamp the file so this runs exactly once per install.
+policy_version=2
+have_version=$(jq -r '.policy_version // 0' "$settings_file" 2>/dev/null || echo 0)
+case "$have_version" in ''|*[!0-9]*) have_version=0 ;; esac
+if [ "$have_version" -lt "$policy_version" ]; then
+  retired='["Bash(omarchy:*)","Bash(uwsm-app:*)","Bash(hyprctl:*)","Bash(xdg-open:*)",
+            "Bash(wpctl:*)","Bash(playerctl:*)","Bash(notify-send:*)","Bash(wl-copy:*)",
+            "Bash(df:*)","Bash(free:*)","Bash(sensors:*)","Bash(pacman -Q:*)",
+            "Bash(systemctl --user status:*)"]'
+  added=$(jq -r --arg d "$plugin_dir" '
+    ["omarchy-do","desktop","media","notify","clip","sysinfo"]
+    | map("Bash(" + $d + "/bin/" + . + ".sh:*)")' <<<'null')
+  tmp=$(mktemp "$state_dir/.settings.XXXXXX")
+  if jq --argjson retire "$retired" --argjson add "$added" --argjson v "$policy_version" '
+        .permissions.allow = (((.permissions.allow // []) - $retire) + $add | unique)
+        | .policy_version = $v' "$settings_file" > "$tmp" 2>/dev/null; then
+    chmod 600 "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$settings_file"
+  else
+    rm -f "$tmp"
+  fi
 fi
 activity_file="$state_dir/activity.jsonl"
 : > "$activity_file"
@@ -50,34 +85,47 @@ instructions="You are 'Computer', a voice assistant on an Omarchy Linux desktop 
 words arrive via speech-to-text, so tolerate small transcription errors. \
 The current date and time: $now.
 
-You may OPERATE this computer with your tools when asked. Useful desktop verbs:
+You may OPERATE this computer with your tools when asked. Every desktop
+action goes through one of the wrapper commands below — they are the only
+pre-approved commands, and each one validates its own arguments, so a
+mistyped or invented flag is refused rather than run. Do not try to reach
+around them with omarchy, hyprctl, uwsm-app or xdg-open directly: those are
+not approved, and asking for them will be denied.
+- Apps and links:
+  - $plugin_dir/bin/desktop.sh launch <app>  (terminal, browser, editor,
+    files, music, spotify, signal, slack, discord, calendar, settings...)
+    Any other app name still works but asks the user to confirm first.
+  - $plugin_dir/bin/desktop.sh launch browser <https url>
+  - $plugin_dir/bin/desktop.sh open-url <https url>   (http/https only)
+- The omarchy command center, through $plugin_dir/bin/omarchy-do.sh <verb...>:
+  - Look and feel: 'omarchy-do.sh theme list', 'omarchy-do.sh theme set <name>',
+    'omarchy-do.sh theme bg next', 'omarchy-do.sh font set <name>',
+    'omarchy-do.sh toggle nightlight', 'omarchy-do.sh display text size <n>'.
+  - Screen: 'omarchy-do.sh screenshot', 'omarchy-do.sh capture screenshot region|window|fullscreen copy|save',
+    'omarchy-do.sh capture text' (OCR a region), 'omarchy-do.sh capture screenrecording'.
+  - Comfort and session: 'omarchy-do.sh toggle idle stay-awake',
+    'omarchy-do.sh toggle notification silencing', 'omarchy-do.sh toggle touchpad',
+    'omarchy-do.sh powerprofiles set battery power-saver'.
+  - Reminders and notices: 'omarchy-do.sh reminder <minutes> <message>',
+    'omarchy-do.sh reminder show'.
+  - Status to read back: 'omarchy-do.sh system stats', 'omarchy-do.sh battery status',
+    'omarchy-do.sh network status', 'omarchy-do.sh monitor state',
+    'omarchy-do.sh powerprofiles list'.
+  - Disruptive verbs — 'system lock', 'system logout', 'system reboot',
+    'system shutdown', 'system suspend', 'toggle touchscreen', 'gpu switch' —
+    are allowed but each one puts a confirmation card in the panel and waits
+    for the user. Run them only when clearly asked. Approval is for that one
+    action; it is never remembered.
+- Sound and playback: $plugin_dir/bin/media.sh volume up|down|mute|unmute|toggle|<0-150>,
+  media.sh mic mute|unmute|toggle, media.sh player play|pause|toggle|next|previous|stop|status.
+- Notifications: $plugin_dir/bin/notify.sh '<headline>' '<body>'.
+- Clipboard: $plugin_dir/bin/clip.sh '<text>' (write only; you cannot read the clipboard).
+- Machine facts: $plugin_dir/bin/sysinfo.sh disk|memory|sensors|battery|windows|monitors|workspaces|active,
+  sysinfo.sh package <name>, sysinfo.sh unit <user-unit>.
 - Control the browser directly: browser automation tools (when available) drive
   the user's real Chromium — open/read/navigate tabs, click, fill forms. Use
   them when the user wants something done IN the browser. On a permission
   error, tell the user to grant automation in the Claude browser extension.
-- Just open a page: 'omarchy launch browser [url]' or 'xdg-open <url>'
-- Launch apps: 'omarchy launch <app>' (terminal, editor, nautilus, spotify, signal...), or 'uwsm-app -- <command>' for anything else
-- System controls via the 'omarchy' CLI. It is a full command center — run
-  'omarchy <group> --help' to discover a group; common non-destructive verbs:
-  - Look and feel: 'omarchy theme list', 'omarchy theme set <name>',
-    'omarchy theme bg next', 'omarchy font set <name>',
-    'omarchy toggle nightlight', 'omarchy display text size <n>'.
-  - Screen: 'omarchy screenshot', or 'omarchy capture screenshot region|window|fullscreen copy|save';
-    'omarchy capture text' (OCR a screen region); 'omarchy capture screenrecording' to start/stop a recording.
-  - Sound: 'omarchy audio output volume raise|lower|mute-toggle|+N|-N',
-    'omarchy audio input mute', 'omarchy audio output switch' (change output device).
-  - Brightness: 'omarchy brightness display +10%|-10%', 'omarchy brightness keyboard up|down'.
-  - Comfort and session: 'omarchy system lock', 'omarchy toggle idle stay-awake' (keep awake),
-    'omarchy toggle notification silencing' (do not disturb), 'omarchy toggle touchpad',
-    'omarchy powerprofiles set battery power-saver'.
-  - Reminders and notices: 'omarchy reminder <minutes> <message>', 'omarchy reminder show',
-    'omarchy notification send <headline> <text>'.
-  - Status you can just read back (no change): 'omarchy system stats', 'omarchy battery status',
-    'omarchy network status', 'omarchy network speedtest', 'omarchy monitor state',
-    'omarchy powerprofiles list'.
-  These are pre-approved. A handful are disruptive — 'omarchy system logout',
-  'reboot', 'shutdown', turning the touchscreen off, switching GPU — so do those
-  only when clearly asked and confirm first, since they interrupt the session.
 - Look things up: search or fetch when the question needs current information (no need for the browser for a plain lookup) — but read WEB below first.
 
 YOURSELF: you are the 'ajo.computer-ai' Omarchy shell plugin, so questions
@@ -98,7 +146,8 @@ about how you work are questions about files you can go and read.
   voices/ piper/ kokoro/ are the speech engines.
 - Your panel: the End key summons it. Enter speaks, sends, or interrupts;
   Ctrl+I shows the activity log with token and account-usage figures; Esc
-  closes; A and D approve or deny a permission card.
+  closes; A and D approve or deny a permission card; Y and N answer a
+  confirmation card for one specific action.
 - Your conversation transcripts belong to the harness CLI rather than to
   you — Claude Code keeps them under ~/.claude/projects/.
 - Omarchy around you: user config in ~/.config/omarchy (shell.json, plugins/,
@@ -201,12 +250,14 @@ delete memories that turn out wrong. Never store secrets.
 $memory
 --- end of MEMORY.md ---
 
-Pre-approved powers: desktop-action commands (omarchy/xdg-open/uwsm-app/
-hyprctl), media and audio (wpctl, playerctl), notifications (notify-send),
-clipboard (wl-copy), read-only system info (pacman -Q, systemctl --user
-status, df, free, sensors, upower), the built-in web lookup (but not
-localfetch.sh), browser tools, Gmail/Calendar/Drive tools, and your memory
-directory. Anything else is blocked.
+Pre-approved powers: the six wrapper commands above (desktop.sh,
+omarchy-do.sh, media.sh, notify.sh, clip.sh, sysinfo.sh), the built-in web
+lookup (but not localfetch.sh), browser tools, Gmail/Calendar/Drive tools,
+and your memory directory. Anything else is blocked — including the raw
+commands the wrappers call. Some actions the wrappers allow still stop for a
+confirmation card (disruptive omarchy verbs, launching an unknown app,
+fetching from the local network); that is normal, not an error, and a denial
+means stop and say so rather than looking for another route.
 PERMISSIONS: If something you genuinely need is blocked, run
 $plugin_dir/bin/request-grant.sh '<rule>' '<short reason>'
 with a claude-code permission rule (e.g. 'Bash(playerctl:*)'), then tell the
@@ -288,7 +339,77 @@ export COMPUTER_CONV_STARTED="$conv_started"
 export COMPUTER_STATE_DIR="$state_dir"
 export COMPUTER_ACTIVITY_FILE="$activity_file"
 
-if "$adapter" "$1"; then
+# --- running the turn ------------------------------------------------------
+#
+# A turn is a tree, not a process: the adapter runs an agent CLI, which runs
+# jq in a process substitution, which runs whatever tools the agent decided
+# to call. The panel can only signal THIS script (it is the process it
+# spawned), so cancelling used to kill the shell and orphan everything under
+# it — the agent kept working, and kept taking actions, after the orb went
+# idle.
+#
+# `set -m` puts the adapter in a process group of its own, so one signal to
+# -PGID reaches the whole tree. The trap escalates TERM → KILL and reaps
+# before returning, so "idle" in the panel means nothing is still running.
+set -m
+
+turn_pgid=""
+deadline_pid=""
+answer_rc=1
+
+kill_turn() {
+  [ -n "$turn_pgid" ] || return 0
+  kill -TERM "-$turn_pgid" 2>/dev/null || true
+  # Give the agent a moment to unwind (it may be mid-write), then insist.
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "-$turn_pgid" 2>/dev/null || return 0
+    sleep 0.2
+  done
+  kill -KILL "-$turn_pgid" 2>/dev/null || true
+}
+
+on_stop() {
+  kill_turn
+  # The deadline watchdog is sleeping for the rest of the turn's allowance.
+  # Without this it would hold the reap below open for the full ten minutes,
+  # and the panel would keep showing a stopped turn as still running.
+  [ -n "$deadline_pid" ] && kill "$deadline_pid" 2>/dev/null
+  # Reap what is left so this script does not exit ahead of its children.
+  wait 2>/dev/null || true
+  exit 143
+}
+trap on_stop TERM INT HUP
+
+# A turn that never finishes is indistinguishable from one that hung, and it
+# holds the mic pipeline and the agent open indefinitely. Cap it.
+timeout_s="${COMPUTER_TURN_TIMEOUT:-600}"
+case "$timeout_s" in ''|*[!0-9]*) timeout_s=600 ;; esac
+
+"$adapter" "$1" &
+turn_pgid=$!
+
+if [ "$timeout_s" -gt 0 ]; then
+  (
+    sleep "$timeout_s"
+    kill -0 "-$turn_pgid" 2>/dev/null || exit 0
+    jq -cn --arg d "stopped after ${timeout_s}s — the turn ran past its deadline" \
+      '{kind: "error", label: "timeout", detail: $d}' >> "$activity_file" 2>/dev/null || true
+    kill -TERM "-$turn_pgid" 2>/dev/null || true
+    sleep 2
+    kill -KILL "-$turn_pgid" 2>/dev/null || true
+  ) &
+  deadline_pid=$!
+fi
+
+wait "$turn_pgid"
+answer_rc=$?
+turn_pgid=""
+
+[ -n "$deadline_pid" ] && kill "$deadline_pid" 2>/dev/null
+wait 2>/dev/null || true
+
+if [ "$answer_rc" = 0 ]; then
   printf '%s %s %s 1\n' "$conv_id" "$now_epoch" "$agent" > "$conv_file"
 else
   exit 1

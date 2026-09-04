@@ -12,6 +12,11 @@
 # Long-running children are reaped with `wait` and killed by the TERM trap,
 # so Esc/Enter silences the voice mid-word.
 set -u
+# Job control: every stage below runs as its own process group, so a stop
+# takes down the whole stage — piper/ffmpeg/pw-play included — instead of
+# just the shell that started it.
+set -m
+umask 077
 dir="$HOME/.local/share/computer-ai"
 cfg="$HOME/.config/omarchy/computer.json"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,14 +26,32 @@ py="$dir/kokoro/venv/bin/python"
 tmpdir=$(mktemp -d)
 child=""
 bg_pid=""
+lvl_pid=""
 cleanup() { rm -rf "$tmpdir"; }
+
+# Each pid here leads its own process group (set -m), so the negative form
+# reaches the stage's whole tree: the ffmpeg inside emit_levels, the python
+# under a kokoro request, whatever piper spawned.
+end_group() {
+  [ -n "$1" ] || return 0
+  kill -TERM "-$1" 2>/dev/null || true
+  local i
+  for i in 1 2 3 4 5; do
+    kill -0 "-$1" 2>/dev/null || return 0
+    sleep 0.1
+  done
+  kill -KILL "-$1" 2>/dev/null || true
+}
+
 on_term() {
-  [ -n "$child" ] && kill -TERM "$child" 2>/dev/null
-  [ -n "$bg_pid" ] && kill -TERM "$bg_pid" 2>/dev/null
+  end_group "$child"
+  end_group "$bg_pid"
+  end_group "$lvl_pid"
+  wait 2>/dev/null || true
   cleanup
   exit 143
 }
-trap on_term TERM INT
+trap on_term TERM INT HUP
 trap cleanup EXIT
 
 run_stage() {
@@ -89,7 +112,12 @@ emit_levels() { # $1 = wav — CHUNK header + per-50ms RMS lines
     -f null - </dev/null | awk -F= '/RMS_level/ { print "LEVEL " $2 }'
 }
 
-mapfile -t chunks < <(split_sentences "$1")
+# Bound before anything is split, synthesized or spoken. The panel clamps
+# too; this is the producer-side guard for any other caller (IPC `say`).
+text=$(printf '%s' "${1:-}" | head -c "${COMPUTER_SPEAK_MAX_BYTES:-8000}")
+[ -n "$text" ] || exit 0
+
+mapfile -t chunks < <(split_sentences "$text")
 [ "${#chunks[@]}" -gt 0 ] || exit 0
 
 # Character-count fractions per chunk, so the panel's teleprompter can map
@@ -98,7 +126,12 @@ total_chars=0
 for c in "${chunks[@]}"; do total_chars=$((total_chars + ${#c})); done
 cum_chars=0
 
-synth "${chunks[0]}" "$tmpdir/0.wav" || exit 1
+# Even the first synthesis runs as an owned job: a stop during the ~1s of
+# model warm-up must take piper/kokoro with it, not leave it rendering.
+synth "${chunks[0]}" "$tmpdir/0.wav" &
+bg_pid=$!
+wait "$bg_pid" || exit 1
+bg_pid=""
 
 for ((i = 0; i < ${#chunks[@]}; i++)); do
   # Kick off the next chunk's synthesis before playing this one.
@@ -112,7 +145,10 @@ for ((i = 0; i < ${#chunks[@]}; i++)); do
   awk -v a="$cum_chars" -v b=$((cum_chars + ${#chunks[$i]})) -v t="$total_chars" \
     'BEGIN { printf "FRAC %.4f %.4f\n", a/t, b/t }'
   cum_chars=$((cum_chars + ${#chunks[$i]}))
-  emit_levels "$tmpdir/$i.wav"
+  emit_levels "$tmpdir/$i.wav" &
+  lvl_pid=$!
+  wait "$lvl_pid" || true
+  lvl_pid=""
   echo "PLAY"
   run_stage pw-play "$tmpdir/$i.wav"
 

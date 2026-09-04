@@ -4,6 +4,7 @@
 # plugin hot-reload and kill the open panel); ask.sh consumes it on the next
 # turn and mints a new session.
 set -eu
+umask 077
 state="$HOME/.local/share/computer-ai/state"
 mkdir -p "$state"
 touch "$state/new-conversation-requested"

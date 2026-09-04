@@ -54,9 +54,24 @@ a *partial* usage snapshot per message that does not sum to the turn
 total, so a running tally built from those is confidently wrong — the
 panel deliberately ignores per-message output counts for that reason.
 
+Two more kinds are written by `bin/confirm.sh` rather than by an adapter,
+and an adapter should never emit them: `confirm` (`id`, `label`, `detail`)
+puts a blocking Y/N card in the panel for one specific action, and
+`confirm-done` clears it once the answer — or the timeout — arrives. They
+travel on this stream because the panel is already tailing it, so a
+question can appear mid-turn without a second watcher. If your harness
+needs a human yes for something disruptive, shell out to `bin/confirm.sh`
+and act on its exit status; do not write the lines yourself.
+
 Adapters that cannot stream simply ignore the variable; they just show as
 a spinning orb with no detail. `claude.sh` is the worked example — it runs
 `--output-format stream-json` and turns each event into a line.
+
+One rule for adapters that spawn helpers: `bin/ask.sh` runs the adapter in
+its own process group and terminates the whole group when the user cancels
+or the turn deadline passes. Keep your children in that group — do not
+`setsid` or otherwise detach them — or a cancelled turn will leave them
+running.
 
 ## Answering
 

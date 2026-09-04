@@ -32,7 +32,28 @@ Item {
     return decodeURIComponent(u.replace(/^file:\/\//, ""))
   }
   readonly property string binDir: pluginDir + "/bin"
-  readonly property string recFile: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/computer-ai-question.wav"
+
+  // Where the microphone capture goes. XDG_RUNTIME_DIR is per-user and 0700;
+  // the state directory (also 0700) is the fallback. /tmp is deliberately not
+  // an option: it is shared and world-writable, and a fixed name there —
+  // which is what this used to be — is a file another user can pre-create as
+  // a symlink and then read your microphone through.
+  readonly property string runtimeDir: {
+    var xdg = Quickshell.env("XDG_RUNTIME_DIR")
+    return (xdg && xdg !== "") ? xdg : (home + "/.local/share/computer-ai/state")
+  }
+
+  // A fresh unguessable name per turn, and transcribe.sh deletes it as soon
+  // as there is a transcript. Not a secret in itself — the directory is what
+  // keeps others out — but it removes the pre-created-symlink race entirely.
+  property string recFile: ""
+
+  function newRecFile() {
+    var token = ""
+    for (var i = 0; i < 4; i++)
+      token += ("0000000" + Math.floor(Math.random() * 0x100000000).toString(16)).slice(-8)
+    return runtimeDir + "/computer-ai-" + token + ".raw"
+  }
 
   // --- views ----------------------------------------------------------------
   //
@@ -114,6 +135,11 @@ Item {
   // Set when the user allows a grant; once the queue drains the turn
   // auto-continues so they don't have to say "go ahead".
   property bool grantResumePending: false
+
+  // The tier-3 card: one specific action, waiting on one specific yes.
+  // Unlike a grant, answering it approves nothing for next time — the script
+  // that asked is blocked on this single answer and then forgets it.
+  property var pendingConfirm: null
   // "new" for the first question after a fresh summon (ask.sh applies its
   // grace window), "follow" for later turns — they resume the same agent
   // conversation, so follow-ups keep their context.
@@ -295,6 +321,28 @@ Item {
     }
   }
 
+  // --- bounds ---------------------------------------------------------------
+  //
+  // Every producer below feeds something that renders, is persisted, or ends
+  // up in an argv: a transcript, a reply about to be spoken, a step in the
+  // activity drawer, a permission record on the approval card. None of them
+  // has a legitimate reason to be large, and each of them is written by
+  // something this panel does not control — an agent, a harness, a page the
+  // agent read. So they are clamped where they arrive rather than trusted to
+  // be reasonable.
+  readonly property int maxTranscriptChars: 2000
+  readonly property int maxResponseChars: 8000
+  readonly property int maxDraftChars: 8000
+  readonly property int maxActivityLineBytes: 16000
+  readonly property int maxActivityFieldChars: 400
+  readonly property int maxRuleChars: 200
+  readonly property int maxReasonChars: 300
+
+  function clamp(text, limit) {
+    var t = String(text === undefined || text === null ? "" : text)
+    return t.length > limit ? t.slice(0, limit) : t
+  }
+
   function levelFromDb(db) {
     if (!isFinite(db)) return 0
     return Math.max(0, Math.min(1, (db + 52) / 38))
@@ -361,6 +409,10 @@ Item {
   readonly property string agentLabel: agentLabelFor(agent)
 
   readonly property string statusLine: {
+    // A blocked action is the most urgent thing the panel can say: a script
+    // is holding the turn open until this is answered.
+    if (pendingConfirm !== null)
+      return "Waiting on you — Y to allow this once, N to refuse"
     if (phase === "listening") return heardSpeech
       ? "Listening… pause when finished (Enter sends now)"
       : "Listening… speak whenever you're ready"
@@ -410,6 +462,7 @@ Item {
     typing = false
     draft = ""
     grantResumePending = false
+    pendingConfirm = null
   }
 
   // Stop whatever is happening right now (the "open panel + Enter" gesture,
@@ -437,6 +490,7 @@ Item {
     listenedMs = 0
     refreshMic()
     phase = "listening"
+    recFile = newRecFile()
     recProc.command = [binDir + "/record.sh", recFile, "60"]
     recProc.running = true
   }
@@ -485,7 +539,7 @@ Item {
   // Submit typed text — the record→transcribe steps are skipped; from here it
   // is exactly a spoken turn, so the typed text shows as the transcript quote.
   function submitText(text) {
-    var t = String(text || "").replace(/^\s+|\s+$/g, "")
+    var t = clamp(String(text || "").replace(/^\s+|\s+$/g, ""), maxDraftChars)
     if (t === "") return
     typing = false
     draft = ""
@@ -511,14 +565,16 @@ Item {
   // Speak arbitrary text (IPC `say`), bypassing the question pipeline — also
   // handy for other scripts that want a voice.
   function say(text) {
+    var spoken = clamp(text, maxResponseChars)
+    if (spoken === "") return
     if (speakProc.running) speakProc.running = false
     speechTimer.stop()
     speechLevels = []
     speechIndex = -1
     expectedStop = false
-    response = text
+    response = spoken
     phase = "speaking"
-    speakProc.command = [binDir + "/speak.sh", text]
+    speakProc.command = [binDir + "/speak.sh", spoken]
     speakProc.running = true
   }
 
@@ -594,8 +650,24 @@ Item {
         var parsed = null
         try {
           var line = String(text || "").trim()
-          if (line !== "") parsed = JSON.parse(line)
+          if (line !== "" && line.length <= root.maxActivityLineBytes) parsed = JSON.parse(line)
         } catch (e) {}
+        // The queue file is written by the agent. What lands on the approval
+        // card therefore has to be checked, not just parsed: a rule is one
+        // short line of permission expression, and a reason is one line of
+        // explanation — anything else is dropped rather than rendered.
+        if (parsed !== null) {
+          var rule = String(parsed.rule === undefined || parsed.rule === null ? "" : parsed.rule)
+          if (rule === "" || rule.length > root.maxRuleChars || /[\r\n]/.test(rule)) {
+            parsed = null
+          } else {
+            parsed = {
+              rule: rule,
+              reason: root.clamp(String(parsed.reason || "").replace(/[\r\n]+/g, " "),
+                                 root.maxReasonChars)
+            }
+          }
+        }
         root.pendingGrant = parsed
         if (parsed === null && root.grantResumePending) {
           root.grantResumePending = false
@@ -608,6 +680,21 @@ Item {
   Process {
     id: grantAct
     onExited: root.refreshGrants()
+  }
+
+  // Answer the tier-3 card. The card clears on the confirm-done line the
+  // script emits as it unblocks, so a slow script never leaves a stale
+  // question on screen — and never loses one either.
+  function resolveConfirm(allowIt) {
+    if (confirmAct.running || pendingConfirm === null) return
+    confirmAct.command = [binDir + "/confirm-reply.sh", String(pendingConfirm.id),
+                          allowIt ? "allow" : "deny"]
+    confirmAct.running = true
+    pendingConfirm = null
+  }
+
+  Process {
+    id: confirmAct
   }
 
   // --- live activity ---
@@ -634,9 +721,34 @@ Item {
   Component.onCompleted: activityProc.running = true
 
   function pushActivity(line) {
+    var raw = String(line)
+    // A single step is a label and a short detail. Anything this size is a
+    // malformed or hostile producer, and parsing it only costs memory.
+    if (raw.length > maxActivityLineBytes) return
     var ev = null
-    try { ev = JSON.parse(String(line)) } catch (e) { return }
+    try { ev = JSON.parse(raw) } catch (e) { return }
     if (!ev || !ev.kind) return
+
+    // A tier-3 gate: bin/confirm.sh is blocked on this, waiting for a human.
+    // It rides the activity stream because the panel is already tailing it,
+    // so the card appears mid-turn with no second watcher.
+    if (ev.kind === "confirm") {
+      var id = String(ev.id || "")
+      if (!/^[0-9-]{1,64}$/.test(id)) return
+      pendingConfirm = {
+        id: id,
+        label: clamp(ev.label, 80),
+        detail: clamp(ev.detail, maxActivityFieldChars)
+      }
+      // The question is useless off-screen, and the script that asked it is
+      // holding the turn open until it is answered.
+      showPanel()
+      return
+    }
+    if (ev.kind === "confirm-done") {
+      if (pendingConfirm && pendingConfirm.id === String(ev.id || "")) pendingConfirm = null
+      return
+    }
     // usage/limits/summary are state, not steps — they update the numbers
     // without adding a row to scroll past.
     if (ev.kind === "usage") { root.turnCtx = Number(ev.ctx) || root.turnCtx; return }
@@ -647,9 +759,9 @@ Item {
       return
     }
     activityModel.append({
-      kind: String(ev.kind),
-      label: String(ev.label || ""),
-      detail: String(ev.detail || "")
+      kind: clamp(ev.kind, 32),
+      label: clamp(ev.label, 120),
+      detail: clamp(ev.detail, maxActivityFieldChars)
     })
     // Scrollback, not state — keep the drawer's memory flat on long runs.
     while (activityModel.count > 300) activityModel.remove(0)
@@ -702,7 +814,7 @@ Item {
       waitForEnd: true
       onStreamFinished: {
         if (root.expectedStop) return
-        root.transcript = String(text || "").trim()
+        root.transcript = root.clamp(String(text || "").trim(), root.maxTranscriptChars)
       }
     }
     onExited: function(exitCode) {
@@ -727,7 +839,9 @@ Item {
       waitForEnd: true
       onStreamFinished: {
         if (root.expectedStop) return
-        root.response = String(text || "").trim()
+        // The reply is spoken and passed as an argument to speak.sh, so it is
+        // bounded here as well as there.
+        root.response = root.clamp(String(text || "").trim(), root.maxResponseChars)
       }
     }
     onExited: function(exitCode) {

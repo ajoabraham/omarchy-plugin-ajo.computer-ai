@@ -104,11 +104,27 @@ Like all Omarchy shell plugins, this runs unsandboxed with your user
 permissions — and unlike most, it drives AI agent CLIs that can execute
 commands. Know the boundaries:
 
-- Agents run headless under an **allowlist** seeded from
-  `defaults/permissions.json` into `~/.local/share/computer-ai/claude-settings.json`:
-  desktop actions (`omarchy`, `xdg-open`, `uwsm-app`, `hyprctl`), media/
-  notification/clipboard tools, read-only system info, web lookup, and their
-  own memory directory. Everything else is denied.
+- Actions are **three-tiered**, and no general-purpose launcher is
+  pre-approved:
+  - **Tier 1 — allowed** (seeded from `defaults/permissions.json` into
+    `~/.local/share/computer-ai/claude-settings.json`): reversible everyday
+    actions, and only through the argv-validating wrappers in `bin/` —
+    `desktop.sh` (launch a known app, open an http(s) link), `omarchy-do.sh`
+    (a table of `omarchy` verbs, not the CLI itself), `media.sh`, `notify.sh`,
+    `clip.sh`, `sysinfo.sh`. Each one refuses arguments outside its own
+    grammar. `uwsm-app`, `hyprctl`, `xdg-open` and bare `omarchy` are *not*
+    granted: any one of them can launch an arbitrary process, which would
+    make every other rule here decorative.
+  - **Tier 2 — asked once**: anything else is requested with
+    `bin/request-grant.sh` and approved by you on a card in the panel. It
+    then persists until you delete the line.
+  - **Tier 3 — asked every time**: disruptive or irreversible actions
+    (`system reboot`/`shutdown`/`logout`/`lock`/`suspend`, `gpu switch`,
+    launching an app outside the known list, fetching from localhost or the
+    LAN) call `bin/confirm.sh`, which blocks the turn on a Y/N card. Saying
+    yes approves that one action and grants nothing for next time.
+  - Upgrading from an older install rewrites the live policy once, retiring
+    the broad rules it used to seed and adding the wrappers in their place.
 - Agents are also confined to `$HOME` as their working directory, whatever
   the allowlist says. Reaching a runtime or state directory elsewhere needs
   a separate `Dir(/absolute/path)` grant, which lands in
@@ -131,12 +147,36 @@ commands. Know the boundaries:
   only this machine can: localhost, the LAN, the router. That is strictly
   wider than the built-in tool, so it is deliberately absent from the default
   allowlist — the agent must request it and you approve it once on the panel
-  card. It is pinned to http/https across redirects, capped in size and time,
-  and prints the address each fetch resolved to, so a local-network fetch is
-  visible in the activity log rather than silent.
-- Voice is an input channel: anything the assistant is permitted to do, a
-  misheard phrase could trigger. Keep the allowlist as narrow as you can
-  live with.
+  card. Beyond that grant, every hop is resolved and classified before the
+  request: public addresses are fetched, while loopback, LAN, link-local,
+  CGNAT and cloud-metadata addresses each need a per-destination Y/N
+  confirmation, every time. The resolved address is pinned for the
+  connection (so a name cannot resolve to something else in between),
+  redirects are followed one at a time and re-checked at each hop rather
+  than by `curl --location`, ambient `~/.curlrc` and proxy settings are
+  ignored, and size and time are capped.
+- Voice is an input channel, and so is everything the agent reads: pages,
+  mail and browser content all arrive in the same context as your words.
+  That is why the boundaries above are enforced by wrappers and gates rather
+  than by instructions in the system prompt — an instruction is advice to
+  the model, not a control. Keep the allowlist as narrow as you can live
+  with.
+- Cancelling really cancels. Each turn runs in its own process group, and
+  Enter (or the IPC `stop`) terminates the whole group — agent CLI, tools,
+  synthesis, playback — escalating to `SIGKILL` and reaping before the panel
+  reports idle. Turns also have a wall-clock deadline
+  (`COMPUTER_TURN_TIMEOUT`, 10 minutes by default).
+- Downloads are pinned and verified. `bin/setup.sh` installs only what
+  `defaults/artifacts.json` names, by immutable identity (a release tag, a
+  Hugging Face commit revision — never a mutable `main`), checks the SHA-256
+  of every file before use, validates archive members against traversal and
+  escaping links (`bin/unpack-archive.py`), stages privately and moves into
+  place atomically.
+- Private by default: state, memory and settings live in `0700` directories
+  with `0600` files, durable state is replaced by atomic rename, and the
+  microphone capture goes to an unguessable name inside your own runtime
+  directory — never `/tmp` — and is deleted as soon as it has been
+  transcribed.
 - Audio is processed locally (Voxtype/whisper STT, Piper/Kokoro TTS);
   transcribed text goes only to the agent CLI you selected.
 
@@ -205,5 +245,6 @@ view rather than recording over the answer.
 **In the panel** — Enter: speak / send / interrupt (while it's working, Enter
 cancels) · Esc or click-away: hide the panel (the agent keeps running and
 still speaks) · Ctrl+I: show/hide the activity log · `/`: type a message
-instead of speaking · A / D: approve / deny a permission request · Settings
-drawer: agent + voice.
+instead of speaking · A / D: approve / deny a permission request · Y / N:
+allow / refuse one specific action the assistant has stopped to confirm ·
+Settings drawer: agent + voice.

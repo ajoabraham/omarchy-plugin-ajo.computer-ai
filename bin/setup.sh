@@ -50,6 +50,72 @@ command -v grok   >/dev/null 2>&1 && { ok "grok (Grok CLI)"; found_agent=1; }   
 command -v codex  >/dev/null 2>&1 && { ok "codex (ChatGPT — run 'codex login' once)"; found_agent=1; } || bad "codex — optional"
 [ "$found_agent" = 1 ] || missing=1
 
+# --- verified third-party artifacts ----------------------------------------
+#
+# Everything downloaded here is named in defaults/artifacts.json by immutable
+# identity (a release tag, a Hugging Face commit revision) and checked
+# against a digest recorded in that file before it is used. The previous
+# version fetched a tarball and two model files from mutable URLs and piped
+# the archive straight into `tar xzf` in the data directory — so the bytes
+# that ran on the user's machine were whatever those URLs served that day,
+# unpacked to wherever the archive asked.
+manifest="$plugin_dir/defaults/artifacts.json"
+
+fetch_verified() { # $1 url, $2 expected sha256, $3 destination path
+  local url="$1" want="$2" out="$3" got
+  # -q ignores ~/.curlrc; https only, no redirect off the scheme.
+  curl -q -sfL --proto '=https' --proto-redir '=https' --max-redirs 5 \
+       --connect-timeout 15 --max-time 900 -o "$out" "$url" || {
+    bad "download failed: $url"; return 1; }
+  got=$(sha256sum "$out" | cut -d' ' -f1)
+  if [ "$got" != "$want" ]; then
+    bad "digest mismatch for $url"
+    note "expected $want"
+    note "got      $got"
+    rm -f "$out"
+    return 1
+  fi
+  return 0
+}
+
+install_tts() {
+  command -v jq >/dev/null 2>&1 || { bad "jq is required to verify downloads"; return 1; }
+  [ -f "$manifest" ] || { bad "missing $manifest"; return 1; }
+
+  local stage piper_url piper_sha voice_url voice_sha cfg_url cfg_sha voice_name
+  piper_url=$(jq -r '.piper.url' "$manifest")
+  piper_sha=$(jq -r '.piper.sha256' "$manifest")
+  voice_name=$(jq -r '.voice.name' "$manifest")
+  voice_url=$(jq -r '.voice.model.url' "$manifest")
+  voice_sha=$(jq -r '.voice.model.sha256' "$manifest")
+  cfg_url=$(jq -r '.voice.config.url' "$manifest")
+  cfg_sha=$(jq -r '.voice.config.sha256' "$manifest")
+
+  # Staged privately inside the data directory, so a half-finished download
+  # is never visible as an installed engine and the final move is a rename
+  # on the same filesystem.
+  mkdir -p "$data_dir/voices"
+  chmod 700 "$data_dir" 2>/dev/null || true
+  stage=$(umask 077; mktemp -d "$data_dir/.stage.XXXXXX") || return 1
+  trap 'rm -rf "$stage"' RETURN
+
+  fetch_verified "$piper_url" "$piper_sha" "$stage/piper.tar.gz" || return 1
+  # Members are validated against traversal and escaping links before a
+  # single byte is written (bin/unpack-archive.py).
+  python3 "$plugin_dir/bin/unpack-archive.py" "$stage/piper.tar.gz" "$stage/unpacked" >/dev/null || {
+    bad "piper archive failed validation"; return 1; }
+  [ -x "$stage/unpacked/piper/piper" ] || { bad "piper archive did not contain piper/piper"; return 1; }
+
+  fetch_verified "$voice_url" "$voice_sha" "$stage/$voice_name.onnx" || return 1
+  fetch_verified "$cfg_url" "$cfg_sha" "$stage/$voice_name.onnx.json" || return 1
+
+  rm -rf "$data_dir/piper"
+  mv "$stage/unpacked/piper" "$data_dir/piper" || return 1
+  mv "$stage/$voice_name.onnx" "$data_dir/voices/$voice_name.onnx" || return 1
+  mv "$stage/$voice_name.onnx.json" "$data_dir/voices/$voice_name.onnx.json" || return 1
+  return 0
+}
+
 echo
 echo "Text-to-speech:"
 have_tts=0
@@ -60,14 +126,8 @@ if [ "$have_tts" = 0 ]; then
     bad "no TTS engine — responses will be text-only (rerun without --no-tts)"
   else
     echo "  downloading Piper + one voice (~90MB) to $data_dir ..."
-    mkdir -p "$data_dir/voices"
-    if (cd "$data_dir" \
-        && curl -sfLO https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz \
-        && tar xzf piper_linux_x86_64.tar.gz && rm piper_linux_x86_64.tar.gz \
-        && cd voices \
-        && curl -sfLO https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx \
-        && curl -sfLO https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx.json); then
-      ok "Piper installed with voice en_GB-northern_english_male-medium"
+    if install_tts; then
+      ok "Piper installed with voice $(jq -r '.voice.name' "$manifest")"
       note "more voices: https://huggingface.co/rhasspy/piper-voices (drop .onnx + .json into $data_dir/voices)"
       note "for the nicer Kokoro engine, see bin/speak.sh and bin/kokoro-say.py"
     else

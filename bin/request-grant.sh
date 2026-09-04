@@ -11,12 +11,29 @@
 # rule that is already queued, and skip one that is already granted (the
 # agent just hasn't seen the new permission take effect yet).
 set -eu
+umask 077
 rule="$1"
 reason="${2:-}"
 state="$HOME/.local/share/computer-ai/state"
 settings="$HOME/.local/share/computer-ai/claude-settings.json"
 pending="$state/pending-grants.jsonl"
 mkdir -p "$state"
+chmod 700 "$state" 2>/dev/null || true
+
+# Bounds before the record is written, because the panel renders it: a rule
+# is a short permission expression and a reason is one line of explanation,
+# and neither is a place to park a wall of text aimed at the approval card.
+if [ "${#rule}" -gt 200 ]; then
+  echo "request-grant: rule too long (max 200 characters)" >&2
+  exit 2
+fi
+case "$rule" in
+  *[$'\n\r']*|'')
+    echo "request-grant: rule must be a single line" >&2
+    exit 2
+    ;;
+esac
+reason=$(printf '%s' "$reason" | tr -d '\n\r' | head -c 300)
 
 # Already granted? A tool rule lives in permissions.allow; a Dir(/path) rule
 # is stored stripped in permissions.additionalDirectories.

@@ -56,6 +56,7 @@ Panel {
   readonly property string statusLine: svc ? svc.statusLine : "Assistant service unavailable"
   readonly property string agentLabel: svc ? svc.agentLabel : "The assistant"
   readonly property var pendingGrant: svc ? svc.pendingGrant : null
+  readonly property var pendingConfirm: svc ? svc.pendingConfirm : null
   readonly property bool typing: svc ? svc.typing : false
   readonly property bool toneEnabled: svc ? svc.toneEnabled : true
 
@@ -160,6 +161,7 @@ Panel {
   function activate() { if (svc) svc.activate() }
   function stopAll() { if (svc) svc.stopAll() }
   function resolveGrant(allowIt) { if (svc) svc.resolveGrant(allowIt) }
+  function resolveConfirm(allowIt) { if (svc) svc.resolveConfirm(allowIt) }
   function submitText(text) {
     if (svc) svc.submitText(text)
     keyCatcher.forceActiveFocus()
@@ -307,6 +309,13 @@ Panel {
             && root.phase !== "thinking") {
           root.enterTyping()
           event.accepted = true
+          return
+        }
+        // A blocked action outranks a queued permission: something is
+        // waiting on this answer right now.
+        if (root.pendingConfirm !== null) {
+          if (event.key === Qt.Key_Y) { root.resolveConfirm(true); event.accepted = true }
+          else if (event.key === Qt.Key_N) { root.resolveConfirm(false); event.accepted = true }
           return
         }
         if (root.pendingGrant === null) return
@@ -809,7 +818,18 @@ Panel {
                 // a message half-typed on the laptop is still there when the
                 // panel is reopened on another monitor. Two-way by hand —
                 // binding `text` would break on the first keystroke.
-                onTextChanged: if (root.svc && text !== root.svc.draft) root.svc.draft = text
+                onTextChanged: {
+                  // TextEdit has no maximumLength, and this text becomes an
+                  // agent prompt: clamp it here rather than discovering the
+                  // size later, in an argv or a log line.
+                  var cap = root.svc ? root.svc.maxDraftChars : 8000
+                  if (text.length > cap) {
+                    text = text.slice(0, cap)
+                    cursorPosition = text.length
+                    return
+                  }
+                  if (root.svc && text !== root.svc.draft) root.svc.draft = text
+                }
 
                 Connections {
                   target: root.svc
@@ -845,6 +865,102 @@ Panel {
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
               Layout.alignment: Qt.AlignBottom
+            }
+          }
+        }
+
+        // Confirmation card: one action, right now, waiting on this answer.
+        // Distinct from the permission card below in both look and wording,
+        // because the decisions are different — this one approves a single
+        // act and is forgotten; that one grants a standing capability.
+        Rectangle {
+          visible: root.pendingConfirm !== null
+          opacity: root.pendingConfirm !== null ? 1 : 0
+          Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+          Layout.fillWidth: true
+          implicitHeight: Math.min(confirmCol.implicitHeight + Style.space(24), Style.space(170))
+          radius: Style.cornerRadius
+          color: Qt.alpha(root.rust, 0.12)
+          border.color: Qt.alpha(root.ember, 0.55)
+          border.width: Math.max(1, Style.normalBorderWidth)
+
+          Flickable {
+            anchors.fill: parent
+            anchors.margins: Style.space(12)
+            contentWidth: width
+            contentHeight: confirmCol.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+
+            ColumnLayout {
+              id: confirmCol
+              width: parent.width
+              spacing: Style.space(6)
+
+              Text {
+                text: "CONFIRM THIS ACTION"
+                color: root.ember
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 2
+              }
+
+              Text {
+                text: root.pendingConfirm ? String(root.pendingConfirm.label || "") : ""
+                color: Color.popups.text
+                font.family: Style.font.family
+                font.pixelSize: Style.font.body
+                wrapMode: Text.WrapAnywhere
+                Layout.fillWidth: true
+              }
+
+              Text {
+                visible: text !== ""
+                text: root.pendingConfirm ? String(root.pendingConfirm.detail || "") : ""
+                color: Qt.alpha(Color.popups.text, 0.6)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+              }
+
+              Text {
+                text: "This one time only — it is not remembered."
+                color: Qt.alpha(Color.popups.text, 0.4)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                font.italic: true
+              }
+
+              RowLayout {
+                spacing: Style.space(16)
+
+                Text {
+                  text: "[Y] Do it"
+                  color: root.ember
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                  font.bold: true
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.resolveConfirm(true)
+                  }
+                }
+
+                Text {
+                  text: "[N] No"
+                  color: Qt.alpha(Color.popups.text, 0.7)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.resolveConfirm(false)
+                  }
+                }
+              }
             }
           }
         }

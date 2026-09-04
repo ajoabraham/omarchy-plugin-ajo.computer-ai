@@ -9,11 +9,15 @@
 # Voxtype mixes progress noise into stdout; the transcript is the last
 # non-empty line once ANSI codes are stripped.
 set -u
+umask 077
 cfg="$HOME/.config/omarchy/computer.json"
 model=$(jq -r '.stt_model // "tiny.en"' "$cfg" 2>/dev/null)
 
 wav=$(mktemp --suffix=.wav)
-trap 'rm -f "$wav"' EXIT
+# Both the converted wav and the raw capture go at the end of this script:
+# the recording has served its purpose once there is a transcript, and it is
+# the most sensitive thing this pipeline touches.
+trap 'rm -f "$wav" "$1"' EXIT
 ffmpeg -hide_banner -loglevel error -f s16le -ar 16000 -ac 1 -i "$1" -y "$wav" </dev/null || exit 1
 
 run_stt() {

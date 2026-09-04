@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "ajo.computer-ai",
   "name": "Computer AI",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "author": "ajo",
   "description": "Voice assistant for Omarchy: a bar icon with a drop-down panel — press a hotkey or click the icon, speak, and a pluggable AI agent (Claude, Grok, ChatGPT, ...) answers aloud and can operate the desktop. The agent keeps running (and speaking) while the panel is closed. After install run: bin/setup.sh --wire.",
   "kinds": [

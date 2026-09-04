@@ -1,19 +1,28 @@
 {
+  "_comment": [
+    "Starter permission policy, seeded once into",
+    "~/.local/share/computer-ai/claude-settings.json and never overwritten.",
+    "",
+    "Tier 1 (this file): reversible, everyday actions, reachable only through",
+    "the argv-validating wrappers in bin/. No general-purpose launcher",
+    "(uwsm-app, hyprctl dispatch exec, xdg-open) and no bare `omarchy` are",
+    "pre-approved, because any one of them makes every other rule here",
+    "meaningless.",
+    "",
+    "Tier 2: anything else the agent needs is requested with",
+    "bin/request-grant.sh and approved by the user on a card in the panel.",
+    "",
+    "Tier 3: disruptive or irreversible actions call bin/confirm.sh and block",
+    "on a per-invocation yes. Approving once grants nothing for next time."
+  ],
   "permissions": {
     "allow": [
-      "Bash(omarchy:*)",
-      "Bash(xdg-open:*)",
-      "Bash(uwsm-app:*)",
-      "Bash(hyprctl:*)",
-      "Bash(wpctl:*)",
-      "Bash(playerctl:*)",
-      "Bash(notify-send:*)",
-      "Bash(wl-copy:*)",
-      "Bash(pacman -Q:*)",
-      "Bash(systemctl --user status:*)",
-      "Bash(df:*)",
-      "Bash(free:*)",
-      "Bash(sensors:*)",
+      "Bash(__PLUGIN_DIR__/bin/omarchy-do.sh:*)",
+      "Bash(__PLUGIN_DIR__/bin/desktop.sh:*)",
+      "Bash(__PLUGIN_DIR__/bin/media.sh:*)",
+      "Bash(__PLUGIN_DIR__/bin/notify.sh:*)",
+      "Bash(__PLUGIN_DIR__/bin/clip.sh:*)",
+      "Bash(__PLUGIN_DIR__/bin/sysinfo.sh:*)",
       "Bash(__PLUGIN_DIR__/bin/request-grant.sh:*)",
       "Bash(__PLUGIN_DIR__/bin/new-conversation.sh:*)",
       "WebFetch",
@@ -24,5 +33,6 @@
       "mcp__claude-in-chrome"
     ],
     "additionalDirectories": []
-  }
+  },
+  "policy_version": 2
 }

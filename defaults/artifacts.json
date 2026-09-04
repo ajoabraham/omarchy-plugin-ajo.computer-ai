@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "Every third-party binary this plugin installs, pinned by immutable",
+    "identity and verified by digest before it is unpacked. setup.sh reads",
+    "this file; nothing else downloads anything.",
+    "",
+    "The Hugging Face URLs name a commit revision rather than 'main' — that",
+    "repository is edited regularly, so 'main' would mean a different voice",
+    "model (and a different binary blob) on every install."
+  ],
+  "piper": {
+    "url": "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz",
+    "sha256": "a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992",
+    "bytes": 26460462,
+    "unpacks_to": "piper"
+  },
+  "voice": {
+    "name": "en_GB-northern_english_male-medium",
+    "revision": "1162a9173d0ce503555aed757976b7a9912eae4c",
+    "model": {
+      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/1162a9173d0ce503555aed757976b7a9912eae4c/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx",
+      "sha256": "57a219ae8e638873db7d18893304be5069c42868f392bb95c3ff17f0690d0689",
+      "bytes": 63201294
+    },
+    "config": {
+      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/1162a9173d0ce503555aed757976b7a9912eae4c/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx.json",
+      "sha256": "69557ed3d974463453e9b0c09dd99a7ed0e52b8b87b64b357dbeeb2540a97d47",
+      "bytes": 4847
+    }
+  }
+}
