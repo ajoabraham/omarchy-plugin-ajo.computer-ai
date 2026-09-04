@@ -14,7 +14,10 @@ media) within a user-approved permission policy.
   only *hides* it: a turn keeps running and still speaks aloud with the panel
   shut. The icon shows the state at a glance — an orbit at rest, red bars
   reacting to your mic while it listens, a pulsing core while it thinks,
-  ember bars dancing to the reply while it speaks.
+  ember bars dancing to the reply while it speaks. On a multi-monitor
+  setup every bar shows the *same* session: the hotkey opens the panel on
+  the screen you're working on, and a turn started there keeps its
+  transcript, activity and orb when you reopen the panel anywhere else.
 - **Orb UI**: audio-reactive particle swarm (a port of the omarchyplugins.com
   parametric canvas) with live mic levels while listening, speech-synced
   playback animation, and mood morphs per phase.
