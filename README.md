@@ -14,13 +14,22 @@ media) within a user-approved permission policy.
   only *hides* it: a turn keeps running and still speaks aloud with the panel
   shut. The icon shows the state at a glance — an orbit at rest, red bars
   reacting to your mic while it listens, a pulsing core while it thinks,
-  ember bars dancing to the reply while it speaks. On a multi-monitor
+  ember bars dancing to the reply while it speaks, and an ember dot when
+  something is waiting for your answer — on every screen, so a card raised
+  by a turn you started elsewhere still finds you. On a multi-monitor
   setup every bar shows the *same* session: the hotkey opens the panel on
   the screen you're working on, and a turn started there keeps its
   transcript, activity and orb when you reopen the panel anywhere else.
 - **Orb UI**: audio-reactive particle swarm (a port of the omarchyplugins.com
   parametric canvas) with live mic levels while listening, speech-synced
   playback animation, and mood morphs per phase.
+- **Shows what it heard**: the level trace from your microphone is kept and
+  drawn under the orb once a turn is captured, with the speech threshold
+  marked through it. A flat rust-coloured strip means nothing reached the
+  threshold — a different problem from a misheard word, and previously the
+  two looked identical from the panel. The reply then reads as it is spoken:
+  what has been said fades back, the sentence playing is lit, and the rest
+  waits in between.
 - **Shows its work**: an agent turn can run for minutes, so while it works
   the voice bars retract and the *gyre* takes the ring — sweeping arcs, an
   elapsed clock, and the newest step the agent took, with a sonar ping on

@@ -82,10 +82,51 @@ Panel {
   readonly property real barPhase: svc ? svc.barPhase : 0
   readonly property string idleVariant: svc ? svc.idleVariant : "cocoon"
 
+  readonly property var micWave: svc ? svc.micWave : []
+  readonly property bool captureTooQuiet: svc ? svc.captureTooQuiet : false
+  readonly property bool awaitingDecision: svc ? svc.awaitingDecision : false
+  readonly property real confirmProgress: svc ? svc.confirmProgress : -1
+
   readonly property var speechLevels: svc ? svc.speechLevels : []
   readonly property int speechIndex: svc ? svc.speechIndex : -1
   readonly property real chunkFracStart: svc ? svc.chunkFracStart : 0
   readonly property real chunkFracEnd: svc ? svc.chunkFracEnd : 1
+
+  // StyledText needs entities escaped, and a reply is arbitrary text.
+  function escapeMarkup(text) {
+    return String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+  }
+
+  // Rich text takes a solid colour — "#aarrggbb" is not a colour Qt parses
+  // here — so the fade is mixed against the card's own background rather
+  // than expressed as transparency.
+  function tint(text, alpha) {
+    if (text === "") return ""
+    var fg = Color.popups.text
+    var bg = Color.popups.background
+    function channel(f, b) {
+      var v = Math.round(255 * (f * alpha + b * (1 - alpha)))
+      v = Math.max(0, Math.min(255, v))
+      return (v < 16 ? "0" : "") + v.toString(16)
+    }
+    var hex = "#" + channel(fg.r, bg.r) + channel(fg.g, bg.g) + channel(fg.b, bg.b)
+    return "<font color=\"" + hex + "\">" + escapeMarkup(text) + "</font>"
+  }
+
+  // The reply, lit by where the voice has got to. Plain text at every other
+  // moment — there is nothing to track when nothing is being said.
+  readonly property string responseMarkup: {
+    if (phase !== "speaking" || response === "") return response
+    var len = response.length
+    var from = Math.max(0, Math.min(len, Math.round(chunkFracStart * len)))
+    var to = Math.max(from, Math.min(len, Math.round(chunkFracEnd * len)))
+    return tint(response.slice(0, from), 0.38)
+      + tint(response.slice(from, to), 1.0)
+      + tint(response.slice(to), 0.62)
+  }
 
   function elapsedLabel() { return svc ? svc.elapsedLabel() : "0:00" }
   function fmtTokens(n) { return svc ? svc.fmtTokens(n) : String(Number(n) || 0) }
@@ -239,6 +280,30 @@ Panel {
       else root.toggle()
     }
 
+    // Something is waiting for an answer. The turn may have started on
+    // another screen entirely, and the card may be behind a closed panel, so
+    // the icon has to be able to say "you" from across the room.
+    Rectangle {
+      visible: root.awaitingDecision
+      width: Math.max(5, Style.space(6))
+      height: width
+      radius: width / 2
+      color: root.ember
+      z: 10
+      anchors.right: parent.right
+      anchors.top: parent.top
+      anchors.rightMargin: Style.space(4)
+      anchors.topMargin: Style.space(5)
+
+      SequentialAnimation on opacity {
+        running: root.awaitingDecision
+        loops: Animation.Infinite
+        alwaysRunToEnd: true
+        NumberAnimation { to: 0.25; duration: 900; easing.type: Easing.InOutSine }
+        NumberAnimation { to: 1.0; duration: 900; easing.type: Easing.InOutSine }
+      }
+    }
+
     // Thinking: a slow rust breath on the radiobox core. (Listening and
     // speaking use the equalizer below; idle sits still.)
     SequentialAnimation on opacity {
@@ -360,6 +425,8 @@ Panel {
     // Shown beside the keys when answering out loud is available, so the
     // card itself teaches the words rather than leaving them in the README.
     property string spokenHint: ""
+    // 0..1 of a deadline left, or -1 for a question with no clock.
+    property real progress: -1
 
     signal accepted()
     signal refused()
@@ -372,6 +439,25 @@ Panel {
     color: gate.fillColor
     border.color: gate.edgeColor
     border.width: Math.max(1, Style.normalBorderWidth)
+
+    // The clock, along the bottom edge: it retreats as the script's patience
+    // runs out, and goes urgent at the end. A card that simply disappeared
+    // when the deadline passed looked like a bug; this makes the same moment
+    // legible.
+    Rectangle {
+      visible: gate.progress >= 0
+      anchors.left: parent.left
+      anchors.bottom: parent.bottom
+      anchors.leftMargin: Style.space(2)
+      anchors.bottomMargin: Style.space(2)
+      width: Math.max(0, (parent.width - Style.space(4)) * Math.max(0, gate.progress))
+      height: Math.max(2, Style.space(2))
+      radius: height / 2
+      color: gate.progress < 0.2 ? Color.urgent : gate.accentColor
+      opacity: 0.65
+      Behavior on width { NumberAnimation { duration: 200 } }
+      Behavior on color { ColorAnimation { duration: 300 } }
+    }
 
     Flickable {
       anchors.fill: parent
@@ -648,12 +734,22 @@ Panel {
               coil:   { AMP: 4.0, WIND: 18, VS: 7, VO: 13, QA: 2, QF: 3.4,
                         SP: 55, TH: 12, ORB: 44, YS: 22, PD: 8, PSP: 2.8,
                         WV: 7, WSP: 2, DOF: 4, RF: 5, DPH: 3,
-                        DENS: 180, CX: 210, CY: 60, ZOOM: 1.55 }
+                        DENS: 180, CX: 210, CY: 60, ZOOM: 1.55 },
+              // Waiting on a decision: drawn in, dense and slow, holding
+              // still rather than drifting. The one moment the orb should
+              // look like it is looking back at you.
+              attend: { AMP: 2.2, WIND: 10, VS: 7, VO: 13, QA: 2, QF: 3,
+                        SP: 76, TH: 15, ORB: 13, YS: 58, PD: 9, PSP: 1.3,
+                        WV: 9, WSP: 1.5, DOF: 4, RF: 3.6, DPH: 1.5,
+                        DENS: 215, CX: 200, CY: -122, ZOOM: 1.36 }
             })
             property var cur: null
             readonly property int points: 1200
 
             function targetPreset() {
+              // A card outranks the phase behind it: whatever the agent was
+              // doing, the panel is now waiting on a person.
+              if (root.awaitingDecision && root.phase !== "listening") return presets.attend
               if (root.phase === "thinking" || root.phase === "transcribing") return presets.storm
               if (root.phase === "idle") return presets[root.idleVariant] || presets.cocoon
               return presets.spark
@@ -807,7 +903,11 @@ Panel {
               var cy = height / 2
               var base = orb.ringRadius
               surge *= 0.94
-              var t = root.animPhase * (1 + 1.6 * surge)
+              // Blocked on a card, the arcs nearly stop: the agent is not
+              // working, it is waiting, and the orb should not claim
+              // otherwise.
+              var pace = root.awaitingDecision ? 0.18 : 1
+              var t = root.animPhase * pace * (1 + 1.6 * surge)
 
               // Faint dial the arcs ride on, so the ring still reads as a
               // ring in the gaps between comet heads.
@@ -1078,6 +1178,7 @@ Panel {
           acceptLabel: "[Y] Do it"
           refuseLabel: "[N] No"
           spokenHint: root.voiceApproval ? "or say “allow” / “deny”" : ""
+          progress: root.confirmProgress
           onAccepted: root.resolveConfirm(true)
           onRefused: root.resolveConfirm(false)
         }
@@ -1098,6 +1199,56 @@ Panel {
           spokenHint: root.voiceApproval ? "or say “allow” / “deny”" : ""
           onAccepted: root.resolveGrant(true)
           onRefused: root.resolveGrant(false)
+        }
+
+        // What the microphone actually got. The orb consumes these levels
+        // live and used to drop them; keeping them means a turn that went
+        // wrong can be read rather than guessed at — a flat line is a
+        // different problem from a misheard word, and they used to look the
+        // same from here.
+        Item {
+          visible: root.micWave.length > 0 && root.phase !== "listening"
+          Layout.fillWidth: true
+          implicitHeight: Style.space(26)
+
+          Canvas {
+            id: micStrip
+            anchors.fill: parent
+
+            readonly property var wave: root.micWave
+            readonly property bool quiet: root.captureTooQuiet
+            onWaveChanged: requestPaint()
+            onQuietChanged: requestPaint()
+
+            onPaint: {
+              var ctx = getContext("2d")
+              ctx.clearRect(0, 0, width, height)
+              var n = wave.length
+              if (n === 0) return
+
+              var mid = height / 2
+              var gap = Math.max(1, Style.spaceReal(1))
+              var w = Math.max(1, (width - gap * (n - 1)) / n)
+              // Rust when the capture never rose above the speech threshold,
+              // ember when it did: the colour is the diagnosis.
+              var body = quiet ? root.rust : root.ember
+
+              for (var i = 0; i < n; i++) {
+                var lvl = Math.max(0.02, Math.min(1, wave[i]))
+                var h = Math.max(1, lvl * (height - 2))
+                ctx.globalAlpha = quiet ? 0.45 : (0.35 + 0.5 * lvl)
+                ctx.fillStyle = body
+                ctx.fillRect(i * (w + gap), mid - h / 2, w, h)
+              }
+
+              // The line the endpointer listens for, so a quiet capture
+              // shows how far under it fell.
+              ctx.globalAlpha = 0.25
+              ctx.fillStyle = Color.popups.text
+              ctx.fillRect(0, mid - 0.5, width, 1)
+              ctx.globalAlpha = 1
+            }
+          }
         }
 
         Text {
@@ -1152,7 +1303,12 @@ Panel {
             width: parent.width
             y: -parent.scrollTarget
             Behavior on y { NumberAnimation { duration: 300; easing.type: Easing.InOutQuad } }
-            text: root.response
+            // Three weights, not one: what has been said fades back, the
+            // sentence being spoken is lit, and what is still coming waits
+            // in between. speak.sh already reports which slice of the reply
+            // is playing (FRAC), so this costs nothing but the markup.
+            text: root.responseMarkup
+            textFormat: root.phase === "speaking" ? Text.StyledText : Text.PlainText
             color: Color.popups.text
             font.family: Style.font.family
             font.pixelSize: Style.font.subtitle

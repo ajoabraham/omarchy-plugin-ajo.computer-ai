@@ -35,8 +35,11 @@ case "$timeout_s" in ''|*[!0-9]*) timeout_s=120 ;; esac
 
 emit() { # $1 = kind, $2 = "queue" to also record it as outstanding
   local line
+  # The deadline travels with the question: a card that quietly expires reads
+  # as a bug, so the panel is told how long it has and can show it draining.
   line=$(jq -cn --arg k "$1" --arg id "$id" --arg l "$label" --arg d "$detail" \
-    '{kind: $k, id: $id, label: $l, detail: $d}') || return 0
+    --argjson t "$timeout_s" \
+    '{kind: $k, id: $id, label: $l, detail: $d, timeout: $t}') || return 0
   [ -n "${COMPUTER_ACTIVITY_FILE:-}" ] &&
     printf '%s\n' "$line" >> "$COMPUTER_ACTIVITY_FILE" 2>/dev/null
   # The queue file holds what is OUTSTANDING — the resolution notice belongs

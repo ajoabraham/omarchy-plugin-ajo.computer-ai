@@ -160,6 +160,25 @@ Item {
   // Shown under the card when something was heard but was not a yes or a no.
   property string decisionHint: ""
 
+  // How much of the confirmation's patience is left, 0..1, or -1 when the
+  // question carries no deadline. A card that simply vanishes when the
+  // script gives up reads as a bug; showing the clock makes it a decision
+  // the user is watching rather than one being taken from them.
+  property double confirmDeadlineMs: 0
+  property real confirmProgress: -1
+
+  Timer {
+    interval: 200
+    repeat: true
+    running: root.pendingConfirm !== null && root.confirmDeadlineMs > 0
+    onTriggered: {
+      var window = Number(root.pendingConfirm ? root.pendingConfirm.timeout : 0) * 1000
+      if (window <= 0) { root.confirmProgress = -1; return }
+      root.confirmProgress = Math.max(0, Math.min(1,
+        (root.confirmDeadlineMs - Date.now()) / window))
+    }
+  }
+
   // The tier-3 card: one specific action, waiting on one specific yes.
   // Unlike a grant, answering it approves nothing for next time — the script
   // that asked is blocked on this single answer and then forgets it.
@@ -314,6 +333,39 @@ Item {
   property real silenceMs: 0
   property int loudStreak: 0
   property real listenedMs: 0
+
+  // The captured level timeline, kept rather than thrown away when the
+  // recording ends. The orb consumes these live; afterwards they are the
+  // only evidence of what the microphone actually got, which is the
+  // difference between "it misheard me" and "it never heard me". `micWave`
+  // is the published, downsampled copy the panel draws.
+  property var micCapture: []
+  property var micWave: []
+  property real micPeakDb: -90
+  readonly property int micWaveBuckets: 96
+
+  function publishMicWave() {
+    var src = micCapture
+    if (!src || src.length === 0) { micWave = []; return }
+    // Averaged into a fixed number of buckets: the strip is a shape to read
+    // at a glance, not a plot, and its width does not depend on how long
+    // you spoke for.
+    var out = []
+    var per = src.length / micWaveBuckets
+    for (var b = 0; b < micWaveBuckets; b++) {
+      var from = Math.floor(b * per)
+      var to = Math.max(from + 1, Math.floor((b + 1) * per))
+      var peak = 0
+      for (var i = from; i < to && i < src.length; i++)
+        if (src[i] > peak) peak = src[i]
+      out.push(peak)
+    }
+    micWave = out
+  }
+
+  // True when the loudest thing in the capture never reached the level that
+  // counts as speech — the microphone was on and heard nothing but room.
+  readonly property bool captureTooQuiet: micWave.length > 0 && micPeakDb < speechThresholdDb
   // Per-chunk RMS timeline of the reply audio; stepped by speechTimer.
   // chunkFrac* map the current chunk onto the whole reply text for the
   // teleprompter (set by speak.sh's FRAC lines).
@@ -536,6 +588,9 @@ Item {
     decisionHint = ""
     expectedStop = false
     micDb = -90
+    micCapture = []
+    micWave = []
+    micPeakDb = -90
     heardSpeech = false
     silenceMs = 0
     loudStreak = 0
@@ -570,6 +625,9 @@ Item {
     response = ""
     error = ""
     micDb = -90
+    micCapture = []
+    micWave = []
+    micPeakDb = -90
     heardSpeech = false
     silenceMs = 0
     loudStreak = 0
@@ -839,11 +897,15 @@ Item {
     if (ev.kind === "confirm") {
       var id = String(ev.id || "")
       if (!/^[0-9-]{1,64}$/.test(id)) return
+      var window = Number(ev.timeout) || 0
       pendingConfirm = {
         id: id,
         label: clamp(ev.label, 80),
-        detail: clamp(ev.detail, maxActivityFieldChars)
+        detail: clamp(ev.detail, maxActivityFieldChars),
+        timeout: window
       }
+      confirmDeadlineMs = window > 0 ? Date.now() + window * 1000 : 0
+      confirmProgress = window > 0 ? 1 : -1
       // The question is useless off-screen, and the script that asked it is
       // holding the turn open until it is answered.
       showPanel()
@@ -892,6 +954,11 @@ Item {
         root.micDb = m[1] === "-inf" ? -90 : parseFloat(m[1])
         if (root.phase !== "listening") return
         root.listenedMs += 50
+        // Warm-up frames are the stream's own clicks, not the room.
+        if (root.listenedMs >= 600) {
+          root.micCapture.push(root.levelFromDb(root.micDb))
+          if (root.micDb > root.micPeakDb) root.micPeakDb = root.micDb
+        }
         if (root.listenedMs < 600) return   // stream warm-up: clicks, pops
         if (root.micDb > root.speechThresholdDb) {
           root.loudStreak += 1
@@ -911,6 +978,9 @@ Item {
       }
     }
     onExited: function() {
+      // Publish the shape even on a cancelled capture: seeing that the
+      // microphone got nothing is useful precisely when a turn went wrong.
+      root.publishMicWave()
       if (root.expectedStop) return
       root.phase = "transcribing"
       transProc.command = [root.binDir + "/transcribe.sh", root.recFile]
@@ -947,7 +1017,11 @@ Item {
 
       if (exitCode !== 0 || heard === "") {
         root.transcript = ""
-        root.error = "I didn't catch that"
+        // The waveform is on screen either way; say which failure it is, so
+        // "it never heard me" and "it misheard me" stop looking alike.
+        root.error = root.captureTooQuiet
+          ? "Nothing above your mic threshold — speak up, or ask me to tune the microphone"
+          : "I didn't catch that"
         root.phase = "idle"
         return
       }
