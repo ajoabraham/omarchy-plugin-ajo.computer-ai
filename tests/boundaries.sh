@@ -21,6 +21,20 @@ pass=0; fail=0
 
 export COMPUTER_CONFIRM_TIMEOUT=1
 
+# The tier-3 cases below run the real confirm.sh, whose job is to put the
+# card where a human can see it — so it opens the panel. That is right in
+# production and wrong in a test: running this suite would otherwise pop the
+# panel open on the machine of whoever is running it, five times in a row.
+#
+# Stubbed here rather than given an off switch in confirm.sh, because
+# "suppress the confirmation card" is not a knob that should exist: anything
+# able to set it could raise a permission prompt nobody ever sees.
+mkdir -p "$work/bin"
+printf '#!/bin/sh\nexit 0\n' > "$work/bin/omarchy-shell"
+chmod +x "$work/bin/omarchy-shell"
+export PATH="$work/bin:$PATH"
+export OMARCHY_PATH="$work"   # so confirm.sh's fallback path finds nothing either
+
 check() { # description, expected exit, command...
   local what="$1" want="$2"; shift 2
   "$@" >/dev/null 2>&1
