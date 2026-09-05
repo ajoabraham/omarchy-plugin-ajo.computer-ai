@@ -24,11 +24,18 @@ media) within a user-approved permission policy.
   transcript, activity and orb when you reopen the panel anywhere else.
 - **Orb UI**: audio-reactive particle swarm (a port of the omarchyplugins.com
   parametric canvas) with live mic levels while listening, speech-synced
-  playback animation, and mood morphs per phase. At rest it is water instead:
-  a phyllotaxis body turned by a slow shearing vortex — faster at the centre
-  than the rim, so the spiral arms wind and unwind — with its surface pushed
-  around by layered swells, evolving through five weathers and repeating on
-  no timescale you would sit and watch.
+  playback animation, and mood morphs per phase. At rest it is a spiral
+  instead: a phyllotaxis body turned by a slow shearing vortex — faster at
+  the centre than the rim, so the arms wind and unwind — with its surface
+  pushed around by layered swells, evolving through five weathers and
+  repeating on no timescale you would sit and watch.
+- **The reply, drawn**: while the assistant speaks, the same spiral reads
+  radius as *time*. A point near the core carries the reply as it sounds now,
+  a point near the rim as it sounded a second ago — so each syllable enters
+  at the centre and travels outward as a bright ring, and the body holds
+  about a second of speech at once. The arms wind tighter through a loud
+  phrase and unwind through a pause. It is the same 50ms RMS timeline that
+  drives the bars and the teleprompter; nothing extra is measured.
 - **Mic check**: the level trace from your microphone is kept, but it is a
   diagnostic, not decoration — it stays hidden on turns that worked. It comes
   up on its own when a capture returns nothing, the assistant raises it while

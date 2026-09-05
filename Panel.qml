@@ -866,18 +866,49 @@ Panel {
             // wind and unwind instead of dissolving.
             readonly property real goldenAngle: 2.39996322972865332
 
+            // While the reply plays, the spiral stops being decoration and
+            // becomes a picture of the audio — but not a level meter, which
+            // the bars around the ring already are. Radius reads as time: a
+            // point near the core samples the reply as it sounds NOW, a
+            // point near the rim samples it as it sounded a second ago. A
+            // loud syllable therefore enters at the middle and travels out
+            // as a bright ring, and the body carries a second of speech at
+            // once. `speechLevels` is the same 50ms RMS timeline that drives
+            // everything else, so this invents nothing.
+            readonly property int voiceLag: 22      // frames from core to rim ≈ 1.1s
+
+            function voiceAt(rr) {
+              var lvls = root.speechLevels
+              var head = root.speechIndex
+              if (!lvls || head < 0 || lvls.length === 0) return 0
+              var i = Math.round(head - rr * voiceLag)
+              if (i < 0 || i >= lvls.length) return 0
+              return lvls[i]
+            }
+
             function paintTide(ctx, lvl) {
               var tgt = tides[root.idleVariant] || tides.cocoon
               if (!tide) { tide = {}; for (var k in tgt) tide[k] = tgt[k] }
               else { for (var k2 in tgt) tide[k2] = mix(tide[k2], tgt[k2], 0.02) }
               var W = tide
 
-              var t = root.animPhase * 0.11
+              var speaking = root.phase === "speaking"
+              // Time runs faster while it talks, and the shear — the thing
+              // that curls the arms — winds up with the voice, so the spiral
+              // tightens on a loud phrase and unwinds through a pause.
+              // Modulation hangs on the per-shell voice below, not on the
+              // overall level: a spoken phrase sits near the top of the
+              // range almost continuously, so driving the shear from `lvl`
+              // just pins every effect at maximum and the arms smear into a
+              // uniform ball. The global level gets a light touch; the
+              // travelling ring does the work.
+              var t = root.animPhase * (speaking ? 0.11 + 0.05 * lvl : 0.11)
               var cx = width / 2
               var cy = height / 2
               var maxR = width / 2 - 3
               // The whole body breathes, slower than anything inside it.
               var body = maxR * (0.90 + W.BREATH * Math.sin(t * 0.42))
+                * (speaking ? 1 + 0.03 * lvl : 1)
 
               var n = points
               var dim = [143, 58, 18]
@@ -894,14 +925,20 @@ Panel {
                 // A vortex that shears: the middle turns faster than the rim.
                 // Water looks like water because it does not rotate rigidly,
                 // and it is the shear that makes the arms curl.
-                a += t * (W.SPIN + W.SHEAR * (1 - rr))
+                a += t * (W.SPIN + W.SHEAR * (1 - rr) * (speaking ? 1 + 0.4 * lvl : 1))
+
+                // What the voice was doing when this radius was the present.
+                var voice = speaking ? voiceAt(rr) : 0
 
                 // Three swells at unrelated frequencies and speeds; their sum
                 // never repeats on any timescale you will sit and watch.
                 var swell = W.SWELL * Math.sin(3 * a + t * 0.9)
                   + W.RIPPLE * Math.sin(5 * a - t * 0.63)
                   + W.CHOP * Math.sin(8 * a + t * 0.37 + rr * 4)
-                var r = body * rr * (1 + swell) * (1 + 0.10 * lvl)
+                // The travelling ring: each shell of the body is displaced by
+                // the loudness of its own moment, so a syllable is a pulse
+                // moving outward rather than the whole orb breathing at once.
+                var r = body * rr * (1 + swell + 0.085 * voice) * (1 + 0.10 * lvl)
 
                 var x = cx + r * Math.cos(a)
                 // A slow vertical bob, phase-shifted by depth, so the body
@@ -911,15 +948,20 @@ Panel {
 
                 if (r > body * 1.02) continue
 
-                // Light gathers toward the surface, the way it does on water.
+                // Light gathers toward the surface, the way it does on water —
+                // and, while speaking, on whichever shell is carrying a loud
+                // moment, so the ring is visible as heat as well as motion.
                 var edge = rr * rr
-                var col = heat(dim, lit, Math.min(1, edge * 0.9 + lvl * 0.4))
-                var glint = (i % 17 === 0) && edge > 0.55
+                var col = heat(dim, lit, Math.min(1, edge * 0.85 + lvl * 0.2 + voice * 0.8))
+                var glint = ((i % 17 === 0) && edge > 0.55) || (speaking && voice > 0.8 && i % 11 === 0)
                 if (glint) col = heat(lit, gold, W.GLINT)
 
-                ctx.globalAlpha = (0.16 + 0.5 * edge) * (glint ? 1.6 : 1) + 0.12 * lvl
+                // Contrast is what makes the arms readable, so the voice
+                // brightens its own shell rather than lifting the whole body.
+                ctx.globalAlpha = (0.14 + 0.46 * edge) * (glint ? 1.6 : 1)
+                  + 0.06 * lvl + 0.30 * voice
                 ctx.fillStyle = col
-                var sz = glint ? 2.1 : (edge > 0.7 ? 1.5 : 1.2)
+                var sz = glint ? 2.1 : (edge > 0.7 || voice > 0.5 ? 1.5 : 1.2)
                 ctx.fillRect(x, y, sz, sz)
               }
               ctx.globalAlpha = 1
@@ -950,10 +992,12 @@ Panel {
               ctx.globalCompositeOperation = "source-over"
               var lvl = orb.level
 
-              // At rest the orb is water. Every other phase keeps the
-              // parametric swarm, which is what makes the resting state read
-              // as a different state rather than a slower one.
-              if (root.phase === "idle" && !root.awaitingDecision) {
+              // The spiral carries both the resting state and the voice.
+              // Everything else keeps the parametric swarm, so "working" and
+              // "speaking" stay visibly different kinds of activity rather
+              // than the same picture at two speeds.
+              if (!root.awaitingDecision
+                  && (root.phase === "idle" || root.phase === "speaking")) {
                 paintTide(ctx, lvl)
                 return
               }
