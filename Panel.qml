@@ -84,6 +84,10 @@ Panel {
 
   readonly property var micWave: svc ? svc.micWave : []
   readonly property bool captureTooQuiet: svc ? svc.captureTooQuiet : false
+  readonly property bool showMicWave: svc ? svc.showMicWave : false
+  readonly property bool micDebug: svc ? svc.micDebug : false
+  readonly property bool playingCapture: svc ? svc.playingCapture : false
+  readonly property real playProgress: svc ? svc.playProgress : 0
   readonly property bool awaitingDecision: svc ? svc.awaitingDecision : false
   readonly property real confirmProgress: svc ? svc.confirmProgress : -1
 
@@ -204,6 +208,11 @@ Panel {
   function stopAll() { if (svc) svc.stopAll() }
   function resolveGrant(allowIt) { if (svc) svc.resolveGrant(allowIt) }
   function resolveConfirm(allowIt) { if (svc) svc.resolveConfirm(allowIt) }
+  function toggleMicDebug() { if (svc) svc.toggleMicDebug() }
+  function playCapture() {
+    if (svc) svc.playCapture()
+    keyCatcher.forceActiveFocus()
+  }
   function submitText(text) {
     if (svc) svc.submitText(text)
     keyCatcher.forceActiveFocus()
@@ -255,18 +264,80 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    // Listening and speaking both hide the glyph and draw a live equalizer,
-    // just like the orb's radial bars react to audio — red for your voice
-    // coming in, ember for the reply going out. Thinking shows a pulsing
-    // radiobox core; idle shows the orbit.
-    text: root.phase === "speaking" ? "󰥛"       // kept for slot sizing, drawn transparent
-        : root.busy                 ? "󰐾"       // radiobox core, thinking
-        : "󰀘"                                    // orbit, idle / listening
+    // The mark is drawn rather than set in a font. Nothing in the icon sets
+    // had the right shape: this assistant is a still point with sound moving
+    // out from it, and every candidate glyph rendered that as separate
+    // arcs — a wifi fan, a broadcast tower — which reads as transmitting,
+    // not listening. So: a core, and around it closed wave rings whose
+    // radius rises and falls continuously. One unbroken line each, because
+    // a ripple is not a series of marks.
     active: root.phase !== "idle"
     useActiveColor: true
-    activeColor: (root.phase === "listening" || root.phase === "speaking")
-               ? "transparent"              // equalizer drawn instead of the glyph
-               : root.rust                  // thinking / transcribing (radiobox core)
+
+    iconComponent: Component {
+      Item {
+        Canvas {
+          id: mark
+          anchors.fill: parent
+          // The equalizer takes over for the phases with live audio.
+          visible: root.phase !== "listening" && root.phase !== "speaking"
+
+          readonly property color ink: root.busy ? root.rust : root.barForeground
+          readonly property real beat: root.animPhase
+          onInkChanged: requestPaint()
+          onBeatChanged: requestPaint()
+          onVisibleChanged: if (visible) requestPaint()
+
+          onPaint: {
+            var ctx = getContext("2d")
+            ctx.clearRect(0, 0, width, height)
+            var size = Math.min(width, height)
+            var cx = width / 2
+            var cy = height / 2
+            // Still at rest, turning while the agent works — the icon moves
+            // when there is something to move about, and the phase only
+            // advances when a panel is open or a turn is running, so a
+            // resting bar costs nothing.
+            var t = beat * (root.busy ? 0.9 : 0.35)
+
+            ctx.fillStyle = ink
+            ctx.globalAlpha = 1
+            ctx.beginPath()
+            ctx.arc(cx, cy, size * 0.135, 0, Math.PI * 2)
+            ctx.fill()
+
+            ctx.strokeStyle = ink
+            ctx.lineJoin = "round"
+            // Two rings, unequal lobe counts and opposite drift, so the gap
+            // between them breathes instead of staying parallel.
+            // Shallow and frequent: at sixteen pixels a deep lobe reads as a
+            // flower or a gear, and the thing being drawn is a ripple.
+            var rings = [
+              { r: 0.29, amp: 0.026, lobes: 9,  dir:  1, alpha: 0.90, w: 0.050 },
+              { r: 0.42, amp: 0.026, lobes: 8,  dir: -1, alpha: 0.48, w: 0.040 }
+            ]
+            for (var k = 0; k < rings.length; k++) {
+              var g = rings[k]
+              ctx.globalAlpha = g.alpha
+              ctx.lineWidth = Math.max(1, size * g.w)
+              ctx.beginPath()
+              var steps = 72
+              for (var i = 0; i <= steps; i++) {
+                var th = (i / steps) * Math.PI * 2
+                var rr = size * (g.r + g.amp * Math.sin(g.lobes * th + g.dir * t))
+                var x = cx + rr * Math.cos(th)
+                var y = cy + rr * Math.sin(th)
+                if (i === 0) ctx.moveTo(x, y)
+                else ctx.lineTo(x, y)
+              }
+              ctx.closePath()
+              ctx.stroke()
+            }
+            ctx.globalAlpha = 1
+          }
+        }
+      }
+    }
     tooltipText: root.busy
       ? (root.agentLabel + " is working — " + root.elapsedLabel())
       : root.phase === "listening" ? "Listening…"
@@ -580,6 +651,12 @@ Panel {
           event.accepted = true
           return
         }
+        // Ctrl+M: keep the mic trace up even on turns that worked.
+        if (event.key === Qt.Key_M && (event.modifiers & Qt.ControlModifier)) {
+          root.toggleMicDebug()
+          event.accepted = true
+          return
+        }
         // '/' opens the text field, when a new turn could start.
         if (event.key === Qt.Key_Slash && !root.typing
             && root.phase !== "listening" && root.phase !== "transcribing"
@@ -754,6 +831,134 @@ Panel {
               if (root.phase === "idle") return presets[root.idleVariant] || presets.cocoon
               return presets.spark
             }
+            // --- the resting orb: water, not particles ------------------
+            //
+            // Idle used to run the same parametric point-cloud as every
+            // other phase, just with calmer constants — and a slow drift of
+            // scattered dots reads as "processing at low intensity" rather
+            // than "at rest". This is a body of liquid instead: points held
+            // in a disc, turned by a slow vortex that spins faster at the
+            // centre than the rim, with the surface pushed in and out by
+            // layered swells. Nothing here is random per frame — every dot's
+            // place comes from its index and the clock — so the motion is
+            // continuous and repeats only after a very long time.
+            //
+            // The five moods are the same idea at different weather: they
+            // cross-fade through the same idleVariant timer the presets used.
+            readonly property var tides: ({
+              cocoon:  { SWELL: 0.055, RIPPLE: 0.030, CHOP: 0.016, SPIN: 0.16,
+                         SHEAR: 0.34, BOB: 0.020, BREATH: 0.030, GLINT: 0.55 },
+              halo:    { SWELL: 0.075, RIPPLE: 0.024, CHOP: 0.012, SPIN: 0.12,
+                         SHEAR: 0.46, BOB: 0.030, BREATH: 0.045, GLINT: 0.75 },
+              lantern: { SWELL: 0.038, RIPPLE: 0.018, CHOP: 0.008, SPIN: 0.09,
+                         SHEAR: 0.22, BOB: 0.014, BREATH: 0.022, GLINT: 0.40 },
+              drift:   { SWELL: 0.090, RIPPLE: 0.042, CHOP: 0.022, SPIN: 0.21,
+                         SHEAR: 0.58, BOB: 0.038, BREATH: 0.055, GLINT: 0.62 },
+              coil:    { SWELL: 0.062, RIPPLE: 0.048, CHOP: 0.030, SPIN: 0.27,
+                         SHEAR: 0.72, BOB: 0.024, BREATH: 0.035, GLINT: 0.85 }
+            })
+            property var tide: null
+
+            // Golden angle: successive indices land as far apart as they can,
+            // which fills the disc evenly with no clumping or spokes.
+            readonly property real goldenAngle: 2.39996322972865332
+
+            // A deterministic scatter: the same index always lands in the
+            // same place, so nothing flickers between frames, but there is
+            // no lattice for the eye to lock onto. (The golden-angle spiral
+            // the swarm uses is even and beautiful and reads, at this
+            // density, as a sunflower head — which is the one thing water
+            // does not look like.)
+            function hash(n) {
+              var x = Math.sin(n * 12.9898) * 43758.5453
+              return x - Math.floor(x)
+            }
+
+            function paintTide(ctx, lvl) {
+              var tgt = tides[root.idleVariant] || tides.cocoon
+              if (!tide) { tide = {}; for (var k in tgt) tide[k] = tgt[k] }
+              else { for (var k2 in tgt) tide[k2] = mix(tide[k2], tgt[k2], 0.02) }
+              var W = tide
+
+              var t = root.animPhase * 0.11
+              var cx = width / 2
+              var cy = height / 2
+              var maxR = width / 2 - 3
+              // The whole body breathes, slower than anything inside it.
+              var body = maxR * (0.90 + W.BREATH * Math.sin(t * 0.42))
+
+              var n = points
+              var dim = [143, 58, 18]
+              var lit = [226, 112, 58]
+              var gold = [245, 190, 96]
+
+              for (var i = n; i--; ) {
+                var h1 = hash(i)
+                var h2 = hash(i + 977)
+                // sqrt keeps the density flat instead of piling points into
+                // the middle.
+                var rr = Math.sqrt(h1)
+                var a = h2 * Math.PI * 2
+
+                // A vortex that shears: the middle turns faster than the rim.
+                // Water looks like water because it does not rotate rigidly.
+                a += t * (W.SPIN + W.SHEAR * (1 - rr))
+
+                // Three swells at unrelated frequencies and speeds; their sum
+                // never repeats on any timescale you will sit and watch.
+                var swell = W.SWELL * Math.sin(3 * a + t * 0.9)
+                  + W.RIPPLE * Math.sin(5 * a - t * 0.63)
+                  + W.CHOP * Math.sin(8 * a + t * 0.37 + rr * 4)
+                var r = body * rr * (1 + swell) * (1 + 0.10 * lvl)
+
+                var x = cx + r * Math.cos(a)
+                var y = cy + r * Math.sin(a)
+                  + body * W.BOB * Math.sin(t * 0.6 + rr * 3.1)
+
+                // Domain warp: displace by a smooth field that depends on
+                // where the point already is. This is what turns a rotating
+                // cloud into a current — neighbours move together, and the
+                // streams fold over each other instead of sliding past.
+                var nx = (x - cx) / body
+                var ny = (y - cy) / body
+                x += body * 0.048 * Math.sin(1.7 * ny + t * 0.8)
+                y += body * 0.040 * Math.cos(1.3 * nx - t * 0.62)
+
+                var dx = x - cx
+                var dy = y - cy
+                var dist = Math.sqrt(dx * dx + dy * dy)
+                if (dist > body) continue
+
+                // Light gathers toward the surface, the way it does on water.
+                var edge = (dist / body) * (dist / body)
+                var col = heat(dim, lit, Math.min(1, edge * 0.85 + lvl * 0.4))
+                var glint = h2 > 0.986 && edge > 0.45
+                if (glint) col = heat(lit, gold, W.GLINT)
+
+                // The body carries light throughout rather than only where
+                // the scatter happened to clump; the surface is brighter,
+                // but the depths are not empty.
+                ctx.globalAlpha = (0.17 + 0.28 * edge) * (glint ? 1.7 : 1) + 0.10 * lvl
+                ctx.fillStyle = col
+                var sz = glint ? 1.8 : (h1 > 0.9 ? 1.4 : 1.1)
+                ctx.fillRect(x, y, sz, sz)
+              }
+
+              // Two caustic rings drifting through the body — the bands of
+              // light that cross the bottom of a pool.
+              for (var c = 0; c < 2; c++) {
+                var phase = t * (0.23 + c * 0.11) + c * 2.1
+                var ringR = body * (0.34 + 0.42 * (0.5 + 0.5 * Math.sin(phase)))
+                ctx.globalAlpha = 0.045 + 0.025 * Math.sin(phase * 1.7)
+                ctx.lineWidth = Math.max(1, Style.spaceReal(2))
+                ctx.strokeStyle = heat(lit, gold, 0.4)
+                ctx.beginPath()
+                ctx.arc(cx, cy, ringR, 0, Math.PI * 2)
+                ctx.stroke()
+              }
+              ctx.globalAlpha = 1
+            }
+
             function mix(a, b, f) { return a + (b - a) * f }
             function heat(c1, c2, f) {
               return "rgb(" + Math.round(mix(c1[0], c2[0], f)) + ","
@@ -773,11 +978,23 @@ Panel {
               // fading streak. destination-out keeps the canvas itself
               // transparent, so this composes over any window background.
               ctx.globalCompositeOperation = "destination-out"
-              ctx.globalAlpha = 0.16
+              // How much of the last frame survives. Erasing less leaves
+              // longer streaks, which is what makes the resting orb look
+              // like it is flowing rather than twitching.
+              ctx.globalAlpha = (root.phase === "idle" && !root.awaitingDecision) ? 0.085 : 0.16
               ctx.fillStyle = "#000000"
               ctx.fillRect(0, 0, width, height)
               ctx.globalCompositeOperation = "source-over"
               var lvl = orb.level
+
+              // At rest the orb is water. Every other phase keeps the
+              // parametric swarm, which is what makes the resting state read
+              // as a different state rather than a slower one.
+              if (root.phase === "idle" && !root.awaitingDecision) {
+                paintTide(ctx, lvl)
+                return
+              }
+
               var busy = root.phase === "thinking" || root.phase === "transcribing"
               var t = root.animPhase * 0.26 * (busy ? 1.9 : 1.0)
               var scale = (Math.min(width, height) / 400) * V.ZOOM
@@ -1201,15 +1418,41 @@ Panel {
           onRefused: root.resolveGrant(false)
         }
 
-        // What the microphone actually got. The orb consumes these levels
-        // live and used to drop them; keeping them means a turn that went
-        // wrong can be read rather than guessed at — a flat line is a
-        // different problem from a misheard word, and they used to look the
-        // same from here.
-        Item {
-          visible: root.micWave.length > 0 && root.phase !== "listening"
+        // What the microphone actually got — a diagnostic, so it stays out
+        // of the way until it is useful: a capture that came back empty
+        // raises it on its own, the agent raises it while walking you
+        // through mic-calibrate.sh, and Ctrl+M pins it open. On a turn that
+        // worked it says nothing the answer does not already say.
+        RowLayout {
+          visible: root.showMicWave && root.phase !== "listening"
           Layout.fillWidth: true
-          implicitHeight: Style.space(26)
+          spacing: Style.space(10)
+
+          // Levels tell you whether audio arrived and how loud. They cannot
+          // tell you whether the recording itself was the problem, so the
+          // capture is playable — the same audio the transcriber was given.
+          Text {
+            text: root.playingCapture ? "◼" : "▶"
+            color: playMouse.containsMouse || root.playingCapture
+              ? root.ember : Qt.alpha(Color.popups.text, 0.55)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+            Layout.alignment: Qt.AlignVCenter
+            Behavior on color { ColorAnimation { duration: 120 } }
+
+            MouseArea {
+              id: playMouse
+              anchors.fill: parent
+              anchors.margins: -Style.space(6)
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.playCapture()
+            }
+          }
+
+          Item {
+            Layout.fillWidth: true
+            implicitHeight: Style.space(26)
 
           Canvas {
             id: micStrip
@@ -1246,8 +1489,34 @@ Panel {
               ctx.globalAlpha = 0.25
               ctx.fillStyle = Color.popups.text
               ctx.fillRect(0, mid - 0.5, width, 1)
+
+              // Playback head, so you can hear which part of the trace is
+              // the part that went wrong.
+              if (root.playingCapture) {
+                ctx.globalAlpha = 0.9
+                ctx.fillStyle = root.ember
+                ctx.fillRect(Math.min(width - 1, root.playProgress * width), 0, 1.5, height)
+              }
               ctx.globalAlpha = 1
             }
+
+            Connections {
+              target: root
+              function onPlayProgressChanged() {
+                if (root.playingCapture) micStrip.requestPaint()
+              }
+              function onPlayingCaptureChanged() { micStrip.requestPaint() }
+            }
+          }
+          }
+
+          Text {
+            visible: root.micDebug
+            text: "Ctrl+M"
+            color: Qt.alpha(Color.popups.text, 0.3)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            Layout.alignment: Qt.AlignVCenter
           }
         }
 

@@ -174,6 +174,11 @@ tune/calibrate the microphone, walk them through it out loud using
 Do NOT poke at wpctl or audio settings by hand; this tool is the interface,
 and it is not pre-approved, so request it once (rule
 'Bash($plugin_dir/bin/mic-calibrate.sh:*)') and it stays available.
+It also drives the panel's mic check view: 'status' and 'analyze' raise it,
+'play' plays the last capture back through the speakers so the user can hear
+whether the recording itself was the problem, and 'done' puts it away when
+you have finished. Offer the playback — hearing it is often what settles
+whether the microphone or the transcription is at fault.
 How it works, and why it fits a voice chat: 'analyze' reads the audio of the
 turn the user JUST spoke — so you don't need them to 'speak on cue', every
 sentence they say to you is a fresh sample. Steps:

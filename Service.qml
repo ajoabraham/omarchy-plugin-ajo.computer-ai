@@ -346,6 +346,7 @@ Item {
 
   function publishMicWave() {
     var src = micCapture
+    captureMs = (src ? src.length : 0) * 50
     if (!src || src.length === 0) { micWave = []; return }
     // Averaged into a fixed number of buckets: the strip is a shape to read
     // at a glance, not a plot, and its width does not depend on how long
@@ -366,6 +367,69 @@ Item {
   // True when the loudest thing in the capture never reached the level that
   // counts as speech — the microphone was on and heard nothing but room.
   readonly property bool captureTooQuiet: micWave.length > 0 && micPeakDb < speechThresholdDb
+
+  // How long the capture ran, for the playback head.
+  property real captureMs: 0
+
+  // The level trace is a diagnostic, not decoration: on a turn that worked
+  // it says nothing the answer does not already say, so it stays hidden.
+  // It comes up on its own when a capture fails, and the agent raises it
+  // deliberately while walking someone through mic-calibrate.sh (which
+  // writes a "mic" line to the activity stream). Ctrl+M pins it open.
+  property bool micDebug: false
+  property bool captureFailed: false
+
+  readonly property bool showMicWave: micWave.length > 0 && (micDebug || captureFailed)
+
+  function toggleMicDebug() {
+    micDebug = !micDebug
+  }
+
+  // --- playing the capture back ---------------------------------------
+  //
+  // The waveform answers "did any audio arrive, and how loud". It cannot
+  // answer "was the recording the problem" — a clipped, muffled or
+  // fan-drowned capture looks much like a good one from here. So the
+  // recording is playable, and the head tracks it across the trace.
+  property bool playingCapture: false
+  property real playProgress: 0
+  property double playStartedMs: 0
+
+  function playCapture() {
+    if (playingCapture) { stopPlayback(); return }
+    playStartedMs = Date.now()
+    playProgress = 0
+    playingCapture = true
+    playProc.command = [binDir + "/play-capture.sh"]
+    playProc.running = true
+  }
+
+  function stopPlayback() {
+    if (playProc.running) playProc.running = false
+    playingCapture = false
+    playProgress = 0
+  }
+
+  Process {
+    id: playProc
+    onExited: {
+      root.playingCapture = false
+      root.playProgress = 0
+    }
+  }
+
+  Timer {
+    interval: 50
+    repeat: true
+    running: root.playingCapture && root.captureMs > 0
+    onTriggered: {
+      // ffmpeg's conversion runs first, so the head starts a beat late
+      // rather than early — better than claiming progress that has not
+      // happened.
+      var elapsed = Date.now() - root.playStartedMs
+      root.playProgress = Math.max(0, Math.min(1, elapsed / root.captureMs))
+    }
+  }
   // Per-chunk RMS timeline of the reply audio; stepped by speechTimer.
   // chunkFrac* map the current chunk onto the whole reply text for the
   // teleprompter (set by speak.sh's FRAC lines).
@@ -589,6 +653,8 @@ Item {
     expectedStop = false
     micDb = -90
     micCapture = []
+    captureFailed = false
+    stopPlayback()
     micWave = []
     micPeakDb = -90
     heardSpeech = false
@@ -626,6 +692,8 @@ Item {
     error = ""
     micDb = -90
     micCapture = []
+    captureFailed = false
+    stopPlayback()
     micWave = []
     micPeakDb = -90
     heardSpeech = false
@@ -911,6 +979,12 @@ Item {
       showPanel()
       return
     }
+    // mic-calibrate.sh raising (or dropping) the diagnostic view.
+    if (ev.kind === "mic") {
+      micDebug = String(ev.detail || "") !== "off"
+      if (!micDebug) stopPlayback()
+      return
+    }
     if (ev.kind === "confirm-done") {
       decisionHint = ""
       if (pendingConfirm && pendingConfirm.id === String(ev.id || "")) pendingConfirm = null
@@ -1007,6 +1081,7 @@ Item {
       if (root.capture === "decision") {
         var answered = heard !== "" && root.applySpokenDecision(root.transcript)
         if (!answered) {
+          if (heard === "") root.captureFailed = true
           root.decisionHint = heard === ""
             ? "I didn't catch that — say “allow” or “deny”, or use Y / N"
             : "That wasn't a yes or a no — say “allow” or “deny”, or use Y / N"
@@ -1022,6 +1097,9 @@ Item {
         root.error = root.captureTooQuiet
           ? "Nothing above your mic threshold — speak up, or ask me to tune the microphone"
           : "I didn't catch that"
+        // Nothing came back, so show the evidence: this is the one moment
+        // the level trace earns its place on screen.
+        root.captureFailed = true
         root.phase = "idle"
         return
       }

@@ -13,23 +13,33 @@ media) within a user-approved permission policy.
   close. The agent lives for the whole shell session, so closing the panel
   only *hides* it: a turn keeps running and still speaks aloud with the panel
   shut. The icon shows the state at a glance — an orbit at rest, red bars
-  reacting to your mic while it listens, a pulsing core while it thinks,
-  ember bars dancing to the reply while it speaks, and an ember dot when
-  something is waiting for your answer — on every screen, so a card raised
-  by a turn you started elsewhere still finds you. On a multi-monitor
+  reacting to your mic while it listens, ember bars dancing to the reply
+  while it speaks, and an ember dot when something is waiting for your
+  answer — on every screen, so a card raised by a turn you started elsewhere
+  still finds you. The mark itself is drawn rather than set in a font: a
+  still core with two closed ripple rings around it, turning while the agent
+  works and holding still at rest. On a multi-monitor
   setup every bar shows the *same* session: the hotkey opens the panel on
   the screen you're working on, and a turn started there keeps its
   transcript, activity and orb when you reopen the panel anywhere else.
 - **Orb UI**: audio-reactive particle swarm (a port of the omarchyplugins.com
   parametric canvas) with live mic levels while listening, speech-synced
-  playback animation, and mood morphs per phase.
-- **Shows what it heard**: the level trace from your microphone is kept and
-  drawn under the orb once a turn is captured, with the speech threshold
-  marked through it. A flat rust-coloured strip means nothing reached the
-  threshold — a different problem from a misheard word, and previously the
-  two looked identical from the panel. The reply then reads as it is spoken:
-  what has been said fades back, the sentence playing is lit, and the rest
-  waits in between.
+  playback animation, and mood morphs per phase. At rest it is water instead:
+  a body of liquid turned by a slow shearing vortex, its surface pushed
+  around by layered swells and crossed by drifting caustics, evolving through
+  five weathers and repeating on no timescale you would sit and watch.
+- **Mic check**: the level trace from your microphone is kept, but it is a
+  diagnostic, not decoration — it stays hidden on turns that worked. It comes
+  up on its own when a capture returns nothing, the assistant raises it while
+  walking you through calibration, and `Ctrl+M` pins it open. The speech
+  threshold is drawn through it, so a flat rust strip ("nothing reached the
+  threshold") is visibly a different problem from a busy ember one ("heard
+  you, misread the words"). Beside it is a play button: the capture is the
+  same audio the transcriber was given, so you can hear whether the recording
+  was the problem, with the playhead tracking the trace as it goes.
+- **Reads as it speaks**: the reply is lit by where the voice has got to —
+  spoken text fades back, the sentence playing is bright, the rest waits in
+  between.
 - **Shows its work**: an agent turn can run for minutes, so while it works
   the voice bars retract and the *gyre* takes the ring — sweeping arcs, an
   elapsed clock, and the newest step the agent took, with a sonar ping on
@@ -46,8 +56,10 @@ media) within a user-approved permission policy.
   agent walks it out loud. It measures the audio of the sentence you *just
   spoke* — no "speak now" cue, every turn is a sample — reports the level
   (too hot, too quiet, good) and adjusts mic gain and the endpointing
-  thresholds. Threshold and silence-window changes take effect on your next
-  sentence, without restarting the shell or closing the panel.
+  thresholds. It raises the panel's mic check while it works, can play the
+  capture back to you so you can hear what it heard, and puts the view away
+  when it is done. Threshold and silence-window changes take effect on your
+  next sentence, without restarting the shell or closing the panel.
 - **Agents**: one adapter script per harness in `agents/` (Claude Code, Grok
   CLI, ChatGPT via Codex CLI ship in-tree). The panel's Assistant dropdown
   discovers them automatically; see `agents/README.md` for the contract.
@@ -276,7 +288,8 @@ view rather than recording over the answer.
 **In the panel** — Enter: speak / send / interrupt (while it's working, Enter
 cancels) · Esc or click-away: hide the panel (the agent keeps running and
 still speaks) · Ctrl+I: show/hide the activity log · `/`: type a message
-instead of speaking · A / D: approve / deny a permission request · Y / N:
+instead of speaking · Ctrl+M: pin the mic check (trace + playback) open ·
+A / D: approve / deny a permission request · Y / N:
 allow / refuse one specific action the assistant has stopped to confirm ·
 Settings drawer: agent, voice, and the two switches below.
 

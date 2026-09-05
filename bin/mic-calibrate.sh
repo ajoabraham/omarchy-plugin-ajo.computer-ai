@@ -18,6 +18,8 @@
 #
 # Subcommands:
 #   status                    current gain, device, thresholds, noise floor
+#   play [pcm]                play the capture back through the speakers
+#   done                      close the panel's mic check view
 #   analyze [pcm] [secs]      measure the last turn's audio (default) or a
 #                             fresh N-second capture; print stats + advice
 #   set-gain <0.0..3.0>       set mic input gain
@@ -41,6 +43,17 @@ recfile="$rec_dir/computer-ai-last.raw"
 src='@DEFAULT_AUDIO_SOURCE@'
 
 die() { echo "mic-calibrate: $*" >&2; exit 2; }
+
+# The panel keeps its waveform hidden until something is wrong, because a
+# level trace on every successful turn is noise. Calibration is exactly the
+# moment it should be on screen, so say so on the activity stream the panel
+# is already tailing.
+mic_view() { # on|off
+  [ -n "${COMPUTER_ACTIVITY_FILE:-}" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  jq -cn --arg d "$1" '{kind: "mic", label: "mic check", detail: $d}' \
+    >> "$COMPUTER_ACTIVITY_FILE" 2>/dev/null || true
+}
 have() { command -v "$1" >/dev/null 2>&1; }
 have wpctl || die "wpctl (pipewire) not found"
 have ffmpeg || die "ffmpeg not found"
@@ -70,6 +83,7 @@ stats() {
 cmd="${1:-status}"
 case "$cmd" in
   status)
+    mic_view on
     thr=$(cfg_num mic_threshold_db); sil=$(cfg_num mic_end_silence_ms)
     echo "device:    $(dev_now)"
     echo "gain:      $(gain_now)   (0.0-3.0; 1.0 = 100%)"
@@ -77,6 +91,7 @@ case "$cmd" in
     ;;
 
   analyze|auto)
+    mic_view on
     secs="${3:-}"
     if [ "${2:-last}" = "fresh" ]; then
       # In the private runtime directory, not /tmp: this is microphone audio,
@@ -129,6 +144,20 @@ case "$cmd" in
     fi
     ;;
 
+  play)
+    # "Was it me or was it the recording?" — the one question the numbers
+    # cannot answer. Playback is the same capture the transcriber was given.
+    mic_view on
+    target="${2:-last}"
+    [ "$target" = "last" ] && target="$recfile"
+    exec "$script_dir/play-capture.sh" "$target"
+    ;;
+
+  done|hide)
+    mic_view off
+    echo "Closed the mic check view."
+    ;;
+
   set-gain)
     v="${2:-}"; [ -n "$v" ] || die "usage: set-gain <0.0..3.0>"
     v=$(awk -v x="$v" 'BEGIN{ if(x<0)x=0; if(x>3)x=3; printf "%.2f", x}')
@@ -151,6 +180,6 @@ case "$cmd" in
     ;;
 
   *)
-    die "unknown command '$cmd' (status|analyze|auto|set-gain|set-threshold|set-silence)"
+    die "unknown command '$cmd' (status|analyze|auto|play|done|set-gain|set-threshold|set-silence)"
     ;;
 esac
