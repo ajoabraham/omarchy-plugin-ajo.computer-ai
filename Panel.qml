@@ -82,6 +82,9 @@ Panel {
   readonly property real barPhase: svc ? svc.barPhase : 0
   readonly property string idleVariant: svc ? svc.idleVariant : "cocoon"
 
+  // The buffer as it fills, not the published snapshot: while you are
+  // speaking there is no snapshot yet, and the orb wants the live tail.
+  readonly property var micCapture: svc ? svc.micCapture : []
   readonly property var micWave: svc ? svc.micWave : []
   readonly property bool captureTooQuiet: svc ? svc.captureTooQuiet : false
   readonly property bool showMicWave: svc ? svc.showMicWave : false
@@ -877,7 +880,17 @@ Panel {
             // everything else, so this invents nothing.
             readonly property int voiceLag: 22      // frames from core to rim ≈ 1.1s
 
-            function voiceAt(rr) {
+            function voiceAt(rr, incoming) {
+              if (incoming) {
+                // Listening has no playhead: the newest frame is simply the
+                // last one recorded, so the present is the end of the buffer
+                // and the past runs back from there.
+                var cap = root.micCapture
+                if (!cap || cap.length === 0) return 0
+                var j = Math.round(cap.length - 1 - rr * voiceLag)
+                if (j < 0 || j >= cap.length) return 0
+                return cap[j]
+              }
               var lvls = root.speechLevels
               var head = root.speechIndex
               if (!lvls || head < 0 || lvls.length === 0) return 0
@@ -893,6 +906,8 @@ Panel {
               var W = tide
 
               var speaking = root.phase === "speaking"
+              var listening = root.phase === "listening"
+              var voiced = speaking || listening
               // Time runs faster while it talks, and the shear — the thing
               // that curls the arms — winds up with the voice, so the spiral
               // tightens on a loud phrase and unwinds through a pause.
@@ -902,18 +917,21 @@ Panel {
               // just pins every effect at maximum and the arms smear into a
               // uniform ball. The global level gets a light touch; the
               // travelling ring does the work.
-              var t = root.animPhase * (speaking ? 0.11 + 0.05 * lvl : 0.11)
+              var t = root.animPhase * (voiced ? 0.11 + 0.05 * lvl : 0.11)
               var cx = width / 2
               var cy = height / 2
               var maxR = width / 2 - 3
               // The whole body breathes, slower than anything inside it.
               var body = maxR * (0.90 + W.BREATH * Math.sin(t * 0.42))
-                * (speaking ? 1 + 0.03 * lvl : 1)
+                * (voiced ? 1 + 0.03 * lvl : 1)
 
               var n = points
-              var dim = [143, 58, 18]
-              var lit = [226, 112, 58]
-              var gold = [245, 190, 96]
+              // Incoming and outgoing voice are different things, and the
+              // bar icon already says so in red and ember. The orb says it
+              // the same way rather than inventing a third vocabulary.
+              var dim = listening ? [126, 34, 28] : [143, 58, 18]
+              var lit = listening ? [223, 74, 62] : [226, 112, 58]
+              var gold = listening ? [248, 150, 130] : [245, 190, 96]
 
               for (var i = n; i--; ) {
                 // sqrt keeps the density flat instead of piling points into
@@ -925,10 +943,10 @@ Panel {
                 // A vortex that shears: the middle turns faster than the rim.
                 // Water looks like water because it does not rotate rigidly,
                 // and it is the shear that makes the arms curl.
-                a += t * (W.SPIN + W.SHEAR * (1 - rr) * (speaking ? 1 + 0.4 * lvl : 1))
+                a += t * (W.SPIN + W.SHEAR * (1 - rr) * (voiced ? 1 + 0.4 * lvl : 1))
 
                 // What the voice was doing when this radius was the present.
-                var voice = speaking ? voiceAt(rr) : 0
+                var voice = voiced ? voiceAt(rr, listening) : 0
 
                 // Three swells at unrelated frequencies and speeds; their sum
                 // never repeats on any timescale you will sit and watch.
@@ -953,7 +971,7 @@ Panel {
                 // moment, so the ring is visible as heat as well as motion.
                 var edge = rr * rr
                 var col = heat(dim, lit, Math.min(1, edge * 0.85 + lvl * 0.2 + voice * 0.8))
-                var glint = ((i % 17 === 0) && edge > 0.55) || (speaking && voice > 0.8 && i % 11 === 0)
+                var glint = ((i % 17 === 0) && edge > 0.55) || (voiced && voice > 0.8 && i % 11 === 0)
                 if (glint) col = heat(lit, gold, W.GLINT)
 
                 // Contrast is what makes the arms readable, so the voice
@@ -996,8 +1014,13 @@ Panel {
               // Everything else keeps the parametric swarm, so "working" and
               // "speaking" stay visibly different kinds of activity rather
               // than the same picture at two speeds.
+              // The spiral is the voice — yours coming in, its own going
+              // out — and the resting state between them. The parametric
+              // swarm is reserved for thinking, so "working" never looks
+              // like "talking".
               if (!root.awaitingDecision
-                  && (root.phase === "idle" || root.phase === "speaking")) {
+                  && (root.phase === "idle" || root.phase === "speaking"
+                      || root.phase === "listening")) {
                 paintTide(ctx, lvl)
                 return
               }
