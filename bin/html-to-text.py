@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn HTML on stdin into readable plain text on stdout.
+"""Turn HTML into readable plain text on stdout, from a file or stdin.
 
 Standard library only, deliberately: this plugin already asks for ffmpeg,
 jq and a TTS engine, and reading a web page is not worth another
@@ -90,7 +90,15 @@ class Extract(HTMLParser):
 
 
 def main():
-    raw = sys.stdin.buffer.read()
+    # A named file rather than a pipe when one is given. The bytes are data
+    # either way — this parser never executes what it reads — but a fetched
+    # body arriving on an interpreter's stdin is the shape of a
+    # download-and-run, and reads that way to a scanner and to a person.
+    if len(sys.argv) > 1:
+        with open(sys.argv[1], "rb") as fh:
+            raw = fh.read()
+    else:
+        raw = sys.stdin.buffer.read()
     # Prefer the charset the document declares; fall back to utf-8 and
     # never fail on a stray byte.
     encoding = "utf-8"

@@ -133,7 +133,10 @@ printf 'URL: %s\nHTTP %s   type: %s   bytes: %s   served by: %s (%s)\n\n' \
 
 case "$mime" in
   text/html|application/xhtml+xml)
-    python3 "$script_dir/html-to-text.py" < "$tmpd/body" > "$tmpd/text" 2>/dev/null \
+    # The body is passed as a filename, not piped into the interpreter: it
+    # is data for a local parser and nothing here ever executes it, and the
+    # call site should look like what it is.
+    python3 "$script_dir/html-to-text.py" "$tmpd/body" > "$tmpd/text" 2>/dev/null \
       || cp "$tmpd/body" "$tmpd/text"
     ;;
   application/json|application/*+json|text/*|application/xml)
