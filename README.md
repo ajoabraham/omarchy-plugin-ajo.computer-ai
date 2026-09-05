@@ -25,9 +25,10 @@ media) within a user-approved permission policy.
 - **Orb UI**: audio-reactive particle swarm (a port of the omarchyplugins.com
   parametric canvas) with live mic levels while listening, speech-synced
   playback animation, and mood morphs per phase. At rest it is water instead:
-  a body of liquid turned by a slow shearing vortex, its surface pushed
-  around by layered swells and crossed by drifting caustics, evolving through
-  five weathers and repeating on no timescale you would sit and watch.
+  a phyllotaxis body turned by a slow shearing vortex — faster at the centre
+  than the rim, so the spiral arms wind and unwind — with its surface pushed
+  around by layered swells, evolving through five weathers and repeating on
+  no timescale you would sit and watch.
 - **Mic check**: the level trace from your microphone is kept, but it is a
   diagnostic, not decoration — it stays hidden on turns that worked. It comes
   up on its own when a capture returns nothing, the assistant raises it while

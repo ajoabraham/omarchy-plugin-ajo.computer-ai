@@ -859,20 +859,12 @@ Panel {
             })
             property var tide: null
 
-            // Golden angle: successive indices land as far apart as they can,
-            // which fills the disc evenly with no clumping or spokes.
+            // Golden angle: successive indices land as far apart as they
+            // can, which fills the disc evenly and — at this density —
+            // draws its own spiral arms. That structure is the point. The
+            // motion below turns it rather than scattering it, so the arms
+            // wind and unwind instead of dissolving.
             readonly property real goldenAngle: 2.39996322972865332
-
-            // A deterministic scatter: the same index always lands in the
-            // same place, so nothing flickers between frames, but there is
-            // no lattice for the eye to lock onto. (The golden-angle spiral
-            // the swarm uses is even and beautiful and reads, at this
-            // density, as a sunflower head — which is the one thing water
-            // does not look like.)
-            function hash(n) {
-              var x = Math.sin(n * 12.9898) * 43758.5453
-              return x - Math.floor(x)
-            }
 
             function paintTide(ctx, lvl) {
               var tgt = tides[root.idleVariant] || tides.cocoon
@@ -893,15 +885,15 @@ Panel {
               var gold = [245, 190, 96]
 
               for (var i = n; i--; ) {
-                var h1 = hash(i)
-                var h2 = hash(i + 977)
                 // sqrt keeps the density flat instead of piling points into
                 // the middle.
-                var rr = Math.sqrt(h1)
-                var a = h2 * Math.PI * 2
+                var f = (i + 0.5) / n
+                var rr = Math.sqrt(f)
+                var a = i * goldenAngle
 
                 // A vortex that shears: the middle turns faster than the rim.
-                // Water looks like water because it does not rotate rigidly.
+                // Water looks like water because it does not rotate rigidly,
+                // and it is the shear that makes the arms curl.
                 a += t * (W.SPIN + W.SHEAR * (1 - rr))
 
                 // Three swells at unrelated frequencies and speeds; their sum
@@ -912,49 +904,23 @@ Panel {
                 var r = body * rr * (1 + swell) * (1 + 0.10 * lvl)
 
                 var x = cx + r * Math.cos(a)
+                // A slow vertical bob, phase-shifted by depth, so the body
+                // rolls instead of sliding.
                 var y = cy + r * Math.sin(a)
                   + body * W.BOB * Math.sin(t * 0.6 + rr * 3.1)
 
-                // Domain warp: displace by a smooth field that depends on
-                // where the point already is. This is what turns a rotating
-                // cloud into a current — neighbours move together, and the
-                // streams fold over each other instead of sliding past.
-                var nx = (x - cx) / body
-                var ny = (y - cy) / body
-                x += body * 0.048 * Math.sin(1.7 * ny + t * 0.8)
-                y += body * 0.040 * Math.cos(1.3 * nx - t * 0.62)
-
-                var dx = x - cx
-                var dy = y - cy
-                var dist = Math.sqrt(dx * dx + dy * dy)
-                if (dist > body) continue
+                if (r > body * 1.02) continue
 
                 // Light gathers toward the surface, the way it does on water.
-                var edge = (dist / body) * (dist / body)
-                var col = heat(dim, lit, Math.min(1, edge * 0.85 + lvl * 0.4))
-                var glint = h2 > 0.986 && edge > 0.45
+                var edge = rr * rr
+                var col = heat(dim, lit, Math.min(1, edge * 0.9 + lvl * 0.4))
+                var glint = (i % 17 === 0) && edge > 0.55
                 if (glint) col = heat(lit, gold, W.GLINT)
 
-                // The body carries light throughout rather than only where
-                // the scatter happened to clump; the surface is brighter,
-                // but the depths are not empty.
-                ctx.globalAlpha = (0.17 + 0.28 * edge) * (glint ? 1.7 : 1) + 0.10 * lvl
+                ctx.globalAlpha = (0.16 + 0.5 * edge) * (glint ? 1.6 : 1) + 0.12 * lvl
                 ctx.fillStyle = col
-                var sz = glint ? 1.8 : (h1 > 0.9 ? 1.4 : 1.1)
+                var sz = glint ? 2.1 : (edge > 0.7 ? 1.5 : 1.2)
                 ctx.fillRect(x, y, sz, sz)
-              }
-
-              // Two caustic rings drifting through the body — the bands of
-              // light that cross the bottom of a pool.
-              for (var c = 0; c < 2; c++) {
-                var phase = t * (0.23 + c * 0.11) + c * 2.1
-                var ringR = body * (0.34 + 0.42 * (0.5 + 0.5 * Math.sin(phase)))
-                ctx.globalAlpha = 0.045 + 0.025 * Math.sin(phase * 1.7)
-                ctx.lineWidth = Math.max(1, Style.spaceReal(2))
-                ctx.strokeStyle = heat(lit, gold, 0.4)
-                ctx.beginPath()
-                ctx.arc(cx, cy, ringR, 0, Math.PI * 2)
-                ctx.stroke()
               }
               ctx.globalAlpha = 1
             }
@@ -978,10 +944,7 @@ Panel {
               // fading streak. destination-out keeps the canvas itself
               // transparent, so this composes over any window background.
               ctx.globalCompositeOperation = "destination-out"
-              // How much of the last frame survives. Erasing less leaves
-              // longer streaks, which is what makes the resting orb look
-              // like it is flowing rather than twitching.
-              ctx.globalAlpha = (root.phase === "idle" && !root.awaitingDecision) ? 0.085 : 0.16
+              ctx.globalAlpha = 0.16
               ctx.fillStyle = "#000000"
               ctx.fillRect(0, 0, width, height)
               ctx.globalCompositeOperation = "source-over"
