@@ -37,6 +37,14 @@ while IFS= read -r dir; do
   [ -n "$dir" ] && [ -d "$dir" ] && add_flags+=(--add-dir "$dir")
 done < <(jq -r '.permissions.additionalDirectories[]?' "$COMPUTER_SETTINGS_FILE" 2>/dev/null)
 
+# The answer is bounded at the producer, not after the fact. The panel reads
+# a turn's stdout to EOF (StdioCollector) and only then clamps to
+# maxResponseChars, so a runaway or faulty CLI would be held in the shell's
+# memory in full before any clamp could run — and that shell is the bar.
+# Clipping inside the jq filter keeps it bounded before it is ever a variable.
+max_answer_chars="${COMPUTER_MAX_ANSWER_CHARS:-65536}"
+case "$max_answer_chars" in ''|*[!0-9]*) max_answer_chars=65536 ;; esac
+
 # Events → activity lines (for the panel's live log) + the final answer.
 # Everything is clipped here rather than in the panel so a runaway command
 # or a huge tool result can never bloat the log file.
@@ -95,7 +103,7 @@ stream_filter='
                         | sort_by(.o) | last | .w // 0),
                session: ((.session_id // "") | .[0:8])} | tojson)
     ),
-    ( "R " + ((.result // "") | @base64) )
+    ( "R " + ((.result // "") | clip($maxr) | @base64) )
   else empty end'
 
 note() {  # kind, detail — an activity line from the adapter itself
@@ -103,6 +111,33 @@ note() {  # kind, detail — an activity line from the adapter itself
   jq -cn --arg k "$1" --arg d "$2" '{kind: $k, label: "", detail: $d}' \
     >> "$COMPUTER_ACTIVITY_FILE" 2>/dev/null || true
 }
+
+# The browser gate travels with the turn, as a Claude Code PreToolUse hook
+# pointed at bin/chrome-gate.sh. It is rendered fresh each turn rather than
+# installed once, because the path in it has to match the plugin directory
+# this adapter is actually running from — a stale copy left behind by a moved
+# or renamed plugin would be a gate that silently is not there.
+#
+# The gate does not depend on the allowlist below: PreToolUse runs ahead of
+# the permission system, so a refusal holds even for a tool some rule in the
+# policy allows. What the allowlist decides is only which browser tools never
+# raise a card at all — the read-only ones.
+plugin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+state_dir="${COMPUTER_STATE_DIR:-$HOME/.local/share/computer-ai/state}"
+hooks_file="$state_dir/claude-hooks.json"
+
+# No gate, no browser. Losing the ability to drive Chrome is a bad turn;
+# driving it without the card is a bad machine.
+chrome_flags=()
+if mkdir -p "$state_dir" 2>/dev/null &&
+   sed "s|__PLUGIN_DIR__|$plugin_dir|g" "$plugin_dir/defaults/chrome-hooks.json" \
+     > "$hooks_file" 2>/dev/null && [ -s "$hooks_file" ] &&
+   [ -x "$plugin_dir/bin/chrome-gate.sh" ]; then
+  chmod 600 "$hooks_file" 2>/dev/null || true
+  chrome_flags=(--chrome --settings "$hooks_file")
+else
+  note meta "browser tools are off for this turn — the confirmation gate could not be installed"
+fi
 
 # Runs one claude invocation, streaming activity as it goes. Success is
 # defined by the result event carrying an answer, not by the exit code —
@@ -122,9 +157,10 @@ run_turn() {
     esac
   done < <(claude "$@" --output-format stream-json --verbose \
     --append-system-prompt "$COMPUTER_INSTRUCTIONS" \
-    --chrome --allowedTools "${allow[@]}" "mcp__claude-in-chrome__.*" \
+    "${chrome_flags[@]+"${chrome_flags[@]}"}" --allowedTools "${allow[@]}" \
     "${add_flags[@]+"${add_flags[@]}"}" "${model_flags[@]+"${model_flags[@]}"}" \
-    2>/dev/null | jq -r --unbuffered "$stream_filter" 2>/dev/null)
+    2>/dev/null | jq -r --unbuffered --argjson maxr "$max_answer_chars" \
+                    "$stream_filter" 2>/dev/null)
   [ "$got" = 1 ] && [ -n "$answer" ] || return 1
   printf '%s\n' "$answer"
 }

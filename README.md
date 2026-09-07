@@ -173,6 +173,16 @@ commands. Know the boundaries:
   additionally requires a one-time automation grant in the Claude browser
   extension, where per-site limits are also available. The ChatGPT harness
   runs in Codex's read-only sandbox and takes no actions.
+- Reading a page is pre-approved; acting on one is not. Navigating, clicking,
+  typing, uploading and running script in the page each block on the tier-3
+  card, enforced by `bin/chrome-gate.sh` as a Claude Code `PreToolUse` hook
+  rather than by a rule in the policy — because the page the agent is reading
+  is also the likeliest place for an instruction it was never meant to follow.
+  Approving a site covers navigating and reading it for the rest of that turn
+  only, so a long browsing task is one card per site instead of one per click;
+  the things you cannot take back stay one card each, every time. A browser
+  tool nobody has classified yet is refused, not assumed harmless. If the gate
+  cannot be installed, the turn runs without browser tools at all.
 - Web fetches normally run on the agent harness's own infrastructure.
   `bin/localfetch.sh` runs them from here instead — which is the point, since
   a page then sees your address and region — but it also means it reaches what
@@ -201,6 +211,9 @@ commands. Know the boundaries:
   not happen without a human yes, that a hostile archive cannot write outside
   its destination, that a cancelled or timed-out turn leaves nothing running,
   and that a spoken "yes, but…" is never read as a yes.
+  `bash tests/chrome-gate.sh` does the same for the browser: what the gate
+  lets through silently, what raises a card, that an approved site cannot be
+  borrowed by a lookalike URL, and that the approval dies with the turn.
 - Voice is an input channel, and so is everything the agent reads: pages,
   mail and browser content all arrive in the same context as your words.
   That is why the boundaries above are enforced by wrappers and gates rather

@@ -53,17 +53,26 @@ chmod 600 "$settings_file" 2>/dev/null || true
 # general-purpose launcher, which makes every other rule in the file
 # decorative. Retire them once, adding the narrow wrapper rules that replace
 # them, and stamp the file so this runs exactly once per install.
-policy_version=2
+#
+# Version 3 retires one more: a bare `mcp__claude-in-chrome` pre-approved
+# every browser tool there is, including the ones that click, type and upload
+# in sessions the user is logged into — and the browser is also where the
+# agent's untrusted input comes from. Reading a page stays pre-approved;
+# acting on one now goes through bin/chrome-gate.sh and a card.
+policy_version=3
 have_version=$(jq -r '.policy_version // 0' "$settings_file" 2>/dev/null || echo 0)
 case "$have_version" in ''|*[!0-9]*) have_version=0 ;; esac
 if [ "$have_version" -lt "$policy_version" ]; then
   retired='["Bash(omarchy:*)","Bash(uwsm-app:*)","Bash(hyprctl:*)","Bash(xdg-open:*)",
             "Bash(wpctl:*)","Bash(playerctl:*)","Bash(notify-send:*)","Bash(wl-copy:*)",
             "Bash(df:*)","Bash(free:*)","Bash(sensors:*)","Bash(pacman -Q:*)",
-            "Bash(systemctl --user status:*)"]'
+            "Bash(systemctl --user status:*)","mcp__claude-in-chrome"]'
   added=$(jq -r --arg d "$plugin_dir" '
-    ["omarchy-do","desktop","media","notify","clip","sysinfo"]
-    | map("Bash(" + $d + "/bin/" + . + ".sh:*)")' <<<'null')
+    (["omarchy-do","desktop","media","notify","clip","sysinfo"]
+     | map("Bash(" + $d + "/bin/" + . + ".sh:*)"))
+    + (["tabs_context_mcp","list_connected_browsers","read_page","get_page_text",
+        "find","read_console_messages","read_network_requests","shortcuts_list"]
+       | map("mcp__claude-in-chrome__" + .))' <<<'null')
   tmp=$(mktemp "$state_dir/.settings.XXXXXX")
   if jq --argjson retire "$retired" --argjson add "$added" --argjson v "$policy_version" '
         .permissions.allow = (((.permissions.allow // []) - $retire) + $add | unique)
@@ -81,7 +90,8 @@ activity_file="$state_dir/activity.jsonl"
 # verdict written just after one gave up has nobody left to collect it.
 # Sweep anything older than an hour so the state directory does not silently
 # accumulate answers to questions no one remembers asking.
-find "$state_dir" -maxdepth 1 -name 'confirm-*' -mmin +60 -delete 2>/dev/null || true
+find "$state_dir" -maxdepth 1 \( -name 'confirm-*' -o -name 'chrome-scope-*' \) \
+  -mmin +60 -delete 2>/dev/null || true
 
 memory=$(head -c 4000 "$mem_dir/MEMORY.md" 2>/dev/null)
 now=$(date '+%A, %B %d %Y, %H:%M')
@@ -351,6 +361,12 @@ export COMPUTER_SETTINGS_FILE="$settings_file"
 export COMPUTER_CONV_ID="$conv_id"
 export COMPUTER_CONV_STARTED="$conv_started"
 export COMPUTER_STATE_DIR="$state_dir"
+# One id per turn. The browser gate scopes an approved site to the turn that
+# asked for it by writing beside this name, so "yes, this site, for now"
+# cannot quietly become a standing permission: the file goes when the turn
+# does, and a turn is one question.
+export COMPUTER_TURN_ID="$$-$(date +%s%N)"
+chrome_scope="$state_dir/chrome-scope-$COMPUTER_TURN_ID"
 export COMPUTER_ACTIVITY_FILE="$activity_file"
 
 # --- running the turn ------------------------------------------------------
@@ -386,6 +402,7 @@ end_group() {
 }
 
 on_stop() {
+  rm -f "$chrome_scope"
   end_group "$turn_pgid"
   end_group "$deadline_pid"
   # Reap what is left so this script does not exit ahead of its children.
@@ -428,6 +445,7 @@ turn_pgid=""
 end_group "$deadline_pid"
 deadline_pid=""
 wait 2>/dev/null || true
+rm -f "$chrome_scope"
 
 if [ "$answer_rc" = 0 ]; then
   printf '%s %s %s 1\n' "$conv_id" "$now_epoch" "$agent" > "$conv_file"

@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "Plugin-owned Claude Code settings, rendered into the private state",
+    "directory each turn and passed to `claude --settings`. It carries one",
+    "thing: the tier-3 gate on the browser tools.",
+    "",
+    "This is not the user's permission policy — that is claude-settings.json,",
+    "which the user edits through the panel's grant cards. Nothing here is",
+    "user-editable, because a gate anything could switch off is not a gate.",
+    "",
+    "The 180s allows bin/confirm.sh its full 120s question plus room to open",
+    "the panel; the hook must outlive the card, or the card would sit there",
+    "answering a question nothing is still waiting for."
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__claude-in-chrome__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__PLUGIN_DIR__/bin/chrome-gate.sh",
+            "timeout": 180
+          }
+        ]
+      }
+    ]
+  }
+}

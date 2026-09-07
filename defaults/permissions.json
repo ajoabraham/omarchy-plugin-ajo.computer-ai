@@ -13,7 +13,12 @@
     "bin/request-grant.sh and approved by the user on a card in the panel.",
     "",
     "Tier 3: disruptive or irreversible actions call bin/confirm.sh and block",
-    "on a per-invocation yes. Approving once grants nothing for next time."
+    "on a per-invocation yes. Approving once grants nothing for next time.",
+    "",
+    "The browser is pre-approved for READING only. Acting on a page —",
+    "navigating, clicking, typing, uploading, running script — is tier 3,",
+    "enforced by bin/chrome-gate.sh as a PreToolUse hook rather than by a",
+    "rule here, because a page the agent reads can tell it what to do next."
   ],
   "permissions": {
     "allow": [
@@ -30,9 +35,16 @@
       "Read(~/.local/share/computer-ai/memory/**)",
       "Write(~/.local/share/computer-ai/memory/**)",
       "Edit(~/.local/share/computer-ai/memory/**)",
-      "mcp__claude-in-chrome"
+      "mcp__claude-in-chrome__tabs_context_mcp",
+      "mcp__claude-in-chrome__list_connected_browsers",
+      "mcp__claude-in-chrome__read_page",
+      "mcp__claude-in-chrome__get_page_text",
+      "mcp__claude-in-chrome__find",
+      "mcp__claude-in-chrome__read_console_messages",
+      "mcp__claude-in-chrome__read_network_requests",
+      "mcp__claude-in-chrome__shortcuts_list"
     ],
     "additionalDirectories": []
   },
-  "policy_version": 2
+  "policy_version": 3
 }
