@@ -42,25 +42,39 @@ run_stt() {
   local out
   out=$(voxtype --model "$1" transcribe "$wav" 2>/dev/null | sed -e 's/\x1b\[[0-9;]*m//g')
 
-  # voxtype's own summary line is authoritative — it carries the transcript in
-  # quotes, and an empty pair of quotes means it heard nothing. Read it
-  # directly, because the fallback below cannot tell silence from success:
-  # with nothing transcribed, the last non-empty line IS the log record, and
-  # the panel would hand the agent a timestamp and the word INFO as if the
-  # user had said it. (Which it did: an unanswered "say something" turn came
-  # back as `2026-09-04T23:31:49Z INFO Transcription completed in 0.40s: ""`.)
+  # The transcript itself: last non-empty line that is neither progress noise
+  # nor a timestamped log record.
+  local plain
+  plain=$(printf '%s\n' "$out" \
+    | grep -vE '^(Loading audio file|Audio format|Processing |whisper_|ggml_|[0-9]{4}-[0-9]{2}-[0-9]{2}T)' \
+    | awk 'NF { last = $0 } END { if (last) print last }')
+
+  # voxtype's own summary line decides silence, and only silence. It carries
+  # the transcript in quotes, and an empty pair of quotes means it heard
+  # nothing — the one reliable signal there is, because the line above cannot
+  # tell silence from success: with nothing transcribed, the last non-empty
+  # line IS the log record, and the panel would hand the agent a timestamp
+  # and the word INFO as if the user had said it. (Which it did: an
+  # unanswered "say something" turn came back as
+  # `2026-09-04T23:31:49Z INFO Transcription completed in 0.40s: ""`.)
+  #
+  # What it must not decide is the words. voxtype elides the transcript in
+  # that line at 50 characters plus an ellipsis, so reading them from here
+  # truncated every spoken turn longer than a short sentence.
   local summary
   summary=$(printf '%s\n' "$out" | grep -a 'Transcription completed in' | tail -1)
-  if [ -n "$summary" ]; then
-    printf '%s' "$summary" | sed -n 's/.*Transcription completed in [^:]*: "\(.*\)"[[:space:]]*$/\1/p'
+  if printf '%s' "$summary" | grep -q 'Transcription completed in [^:]*: ""[[:space:]]*$'; then
     return
   fi
 
-  # No summary line (a different voxtype build): last non-empty line that is
-  # neither progress noise nor a timestamped log record.
-  printf '%s\n' "$out" \
-    | grep -vE '^(Loading audio file|Audio format|Processing |whisper_|ggml_|[0-9]{4}-[0-9]{2}-[0-9]{2}T)' \
-    | awk 'NF { last = $0 } END { if (last) print last }'
+  if [ -n "$plain" ]; then
+    printf '%s\n' "$plain"
+    return
+  fi
+
+  # No plain line (a different voxtype build): the summary's text is all
+  # there is. Possibly truncated, but a truncated transcript beats none.
+  printf '%s' "$summary" | sed -n 's/.*Transcription completed in [^:]*: "\(.*\)"[[:space:]]*$/\1/p'
 }
 
 # Whisper does not return nothing for silence; it returns its favourite
