@@ -59,7 +59,14 @@ chmod 600 "$settings_file" 2>/dev/null || true
 # in sessions the user is logged into — and the browser is also where the
 # agent's untrusted input comes from. Reading a page stays pre-approved;
 # acting on one now goes through bin/chrome-gate.sh and a card.
-policy_version=3
+#
+# Version 4 adds two of this plugin's own helpers to tier 1 — mic-calibrate.sh
+# and config-set.sh. Both are argv-validating wrappers over the assistant's
+# own audio and settings, and both are things the instructions tell the agent
+# to reach for mid-conversation ("help me fix my microphone", "switch to
+# Sonnet"), so a card every time was friction with nothing on the other side
+# of it.
+policy_version=4
 have_version=$(jq -r '.policy_version // 0' "$settings_file" 2>/dev/null || echo 0)
 case "$have_version" in ''|*[!0-9]*) have_version=0 ;; esac
 if [ "$have_version" -lt "$policy_version" ]; then
@@ -68,7 +75,8 @@ if [ "$have_version" -lt "$policy_version" ]; then
             "Bash(df:*)","Bash(free:*)","Bash(sensors:*)","Bash(pacman -Q:*)",
             "Bash(systemctl --user status:*)","mcp__claude-in-chrome"]'
   added=$(jq -r --arg d "$plugin_dir" '
-    (["omarchy-do","desktop","media","notify","clip","sysinfo"]
+    (["omarchy-do","desktop","media","notify","clip","sysinfo",
+      "mic-calibrate","config-set"]
      | map("Bash(" + $d + "/bin/" + . + ".sh:*)"))
     + (["tabs_context_mcp","list_connected_browsers","read_page","get_page_text",
         "find","read_console_messages","read_network_requests","shortcuts_list"]
@@ -316,6 +324,13 @@ sentences, no markdown, no lists, no code blocks. When you acted, briefly \
 confirm what you did."
 
 agent=$(jq -r '.agent // "claude"' "$cfg" 2>/dev/null)
+# The config is a file, and files get edited — by the user, by config-set.sh,
+# and by anything that ever talks the agent into writing one. This name is
+# about to become a path to a script that runs, so it is a bare name or it is
+# nothing: no slash, no dot, no walking out of agents/.
+case $agent in
+  ''|*[!a-z0-9_-]*) agent="claude" ;;
+esac
 adapter="$plugin_dir/agents/$agent.sh"
 if [ ! -x "$adapter" ]; then
   echo "I don't have an agent named $agent installed."

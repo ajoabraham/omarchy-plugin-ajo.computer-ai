@@ -67,6 +67,10 @@ echo "the wrappers the policy names run without asking:"
 check "a wrapper with arguments"        "(silent)" "$(run "$repo/bin/clip.sh copy hello")"
 check "a wrapper with none"             "(silent)" "$(run "$repo/bin/sysinfo.sh")"
 check "a wrapper with a quoted argument" "(silent)" "$(run "$repo/bin/desktop.sh launch \"Firefox\"")"
+check "mic-calibrate, which the agent is told to use" "(silent)" \
+  "$(run "$repo/bin/mic-calibrate.sh status")"
+check "config-set, likewise"            "(silent)" \
+  "$(run "$repo/bin/config-set.sh voice \"kokoro:bf_isabella\"")"
 
 echo "a wrapper is the whole command, not the start of one:"
 check "trailing command after a semicolon" "deny" "$(run "$repo/bin/clip.sh copy hi; id -un")"

@@ -28,6 +28,8 @@
       "Bash(__PLUGIN_DIR__/bin/notify.sh:*)",
       "Bash(__PLUGIN_DIR__/bin/clip.sh:*)",
       "Bash(__PLUGIN_DIR__/bin/sysinfo.sh:*)",
+      "Bash(__PLUGIN_DIR__/bin/mic-calibrate.sh:*)",
+      "Bash(__PLUGIN_DIR__/bin/config-set.sh:*)",
       "Bash(__PLUGIN_DIR__/bin/request-grant.sh:*)",
       "Bash(__PLUGIN_DIR__/bin/new-conversation.sh:*)",
       "WebFetch",
@@ -46,5 +48,5 @@
     ],
     "additionalDirectories": []
   },
-  "policy_version": 3
+  "policy_version": 4
 }

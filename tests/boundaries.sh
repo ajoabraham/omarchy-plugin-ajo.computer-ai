@@ -67,6 +67,11 @@ check "sysinfo: option as unit name"     2 "$repo/bin/sysinfo.sh" unit '-Mfoo'
 check "sysinfo: option as package name"  2 "$repo/bin/sysinfo.sh" package '-Qo/bin/sh'
 check "sysinfo: path in package name"    2 "$repo/bin/sysinfo.sh" package '../../etc/passwd'
 check "notify: empty headline"           2 "$repo/bin/notify.sh" ""
+check "config-set: unlisted key"         2 "$repo/bin/config-set.sh" PATH '"/tmp"'
+check "config-set: agent with a path"    2 "$repo/bin/config-set.sh" agent '"../../tmp/evil"'
+check "config-set: agent with a command" 2 "$repo/bin/config-set.sh" agent '"claude; id"'
+check "config-set: number where a string belongs" 2 "$repo/bin/config-set.sh" voice 42
+check "config-set: missing value"        2 "$repo/bin/config-set.sh" agent
 check "confirm-reply: id with a path"    2 "$repo/bin/confirm-reply.sh" '../../etc/x' allow
 check "confirm-reply: unknown verdict"   2 "$repo/bin/confirm-reply.sh" '123-456' maybe
 check "localfetch: non-http scheme"      2 "$repo/bin/localfetch.sh" 'ftp://x/y'
@@ -109,6 +114,23 @@ if command -v node >/dev/null 2>&1; then
 else
   printf '  --   decisions: skipped (node not installed)\n'
 fi
+
+echo "the config cannot name something else to run:"
+# `agent` is read from computer.json and turned into agents/<name>.sh. The
+# wrapper above refuses to write a bad one; this is the other half, for a
+# file edited by anything else.
+mkdir -p "$work/home4/.config/omarchy"
+printf '{"agent":"../../../%s/evil"}\n' "${work#/}" > "$work/home4/.config/omarchy/computer.json"
+cat > "$work/evil.sh" <<'EVIL'
+#!/usr/bin/env bash
+echo "the config chose this"
+EVIL
+chmod +x "$work/evil.sh"
+out=$(HOME="$work/home4" timeout 20 bash "$repo/bin/ask.sh" "hi" new 2>/dev/null || true)
+case $out in
+  *"the config chose this"*) lose "config: a traversing agent name ran" ;;
+  *) note "config: a traversing agent name does not run" ;;
+esac
 
 echo "a finished turn closes its output:"
 # The panel reads the answer to EOF (StdioCollector waitForEnd), so anything

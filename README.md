@@ -143,8 +143,11 @@ commands. Know the boundaries:
     actions, and only through the argv-validating wrappers in `bin/` —
     `desktop.sh` (launch a known app, open an http(s) link), `omarchy-do.sh`
     (a table of `omarchy` verbs, not the CLI itself), `media.sh`, `notify.sh`,
-    `clip.sh`, `sysinfo.sh`. Each one refuses arguments outside its own
-    grammar. `uwsm-app`, `hyprctl`, `xdg-open` and bare `omarchy` are *not*
+    `clip.sh`, `sysinfo.sh`, plus `mic-calibrate.sh` and `config-set.sh` over
+    the assistant's own audio and settings. Each one refuses arguments outside
+    its own grammar — `config-set.sh` names the keys it may write and the
+    shape each value may take, because one of them (`agent`) decides which
+    adapter script the next turn executes. `uwsm-app`, `hyprctl`, `xdg-open` and bare `omarchy` are *not*
     granted: any one of them can launch an arbitrary process, which would
     make every other rule here decorative.
   - **Tier 2 — asked once**: anything else is requested with
