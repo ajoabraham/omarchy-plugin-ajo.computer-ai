@@ -983,9 +983,10 @@ Item {
         label: clamp(ev.label, 80),
         detail: clamp(ev.detail, maxActivityFieldChars),
         timeout: window,
-        // Only the gates that can be switched off wholesale offer it, and
-        // the script that asked the question is the one that decides.
-        always: ev.always === true
+        // Empty unless the gate that asked can be switched off wholesale,
+        // in which case it names which switch — the script that asked the
+        // question is the one that decides what "always" would mean.
+        always: clamp(String(ev.always || ""), 16)
       }
       confirmDeadlineMs = window > 0 ? Date.now() + window * 1000 : 0
       confirmProgress = window > 0 ? 1 : -1
@@ -1279,23 +1280,24 @@ Item {
   // this question yes and leaves the gate open for the rest. Written through
   // auto-mode.sh rather than config-set.sh, because config-set.sh is
   // pre-approved and this setting must never be one the agent can reach.
+  // setConfigProc is the shared "write one setting and forget it" process —
+  // the same one the voice, agent and toggle helpers use. Which script it
+  // runs is what carries the security argument above, not which Process
+  // object runs it.
+  function setAutoMode(on) {
+    autoMode = on
+    setConfigProc.command = [binDir + "/auto-mode.sh", "set", on ? "on" : "off"]
+    setConfigProc.running = true
+  }
+
   function resolveConfirmAlways() {
     if (pendingConfirm === null) return
-    autoMode = true
-    autoModeProc.command = [binDir + "/auto-mode.sh", "set", "on"]
-    autoModeProc.running = true
+    // Answering "always" means whatever the gate that asked said it means.
+    if (pendingConfirm.always === "shell") setAutoMode(true)
     resolveConfirm(true)
   }
 
-  function toggleAutoMode() {
-    autoMode = !autoMode
-    autoModeProc.command = [binDir + "/auto-mode.sh", "set", autoMode ? "on" : "off"]
-    autoModeProc.running = true
-  }
-
-  Process {
-    id: autoModeProc
-  }
+  function toggleAutoMode() { setAutoMode(!autoMode) }
 
   function toggleTone() {
     toneEnabled = !toneEnabled

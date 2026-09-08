@@ -134,7 +134,8 @@ if ! { mkdir -p "$state_dir" 2>/dev/null &&
        sed "s|__PLUGIN_DIR__|$plugin_dir|g" "$plugin_dir/defaults/hooks.json" \
          > "$hooks_file" 2>/dev/null && [ -s "$hooks_file" ] &&
        [ -x "$plugin_dir/bin/bash-gate.sh" ] &&
-       [ -x "$plugin_dir/bin/chrome-gate.sh" ]; }; then
+       [ -x "$plugin_dir/bin/chrome-gate.sh" ] &&
+       [ -r "$plugin_dir/bin/gate-lib.sh" ]; }; then
   note error "the permission gate could not be installed — the turn was not run"
   echo "I can't answer that one: my permission gate wouldn't install, and I don't run without it. Check that the plugin directory is intact."
   exit 0

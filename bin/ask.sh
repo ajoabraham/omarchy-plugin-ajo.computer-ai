@@ -74,13 +74,14 @@ if [ "$have_version" -lt "$policy_version" ]; then
             "Bash(wpctl:*)","Bash(playerctl:*)","Bash(notify-send:*)","Bash(wl-copy:*)",
             "Bash(df:*)","Bash(free:*)","Bash(sensors:*)","Bash(pacman -Q:*)",
             "Bash(systemctl --user status:*)","mcp__claude-in-chrome"]'
-  added=$(jq -r --arg d "$plugin_dir" '
-    (["omarchy-do","desktop","media","notify","clip","sysinfo",
-      "mic-calibrate","config-set"]
-     | map("Bash(" + $d + "/bin/" + . + ".sh:*)"))
-    + (["tabs_context_mcp","list_connected_browsers","read_page","get_page_text",
-        "find","read_console_messages","read_network_requests","shortcuts_list"]
-       | map("mcp__claude-in-chrome__" + .))' <<<'null')
+  # What to add is whatever a fresh install would be seeded with — read from
+  # the same file, rendered the same way, as the seeding above. Retyping the
+  # list here is how an upgraded install and a new one quietly come to hold
+  # different policies: the two lists have to be edited in lockstep, nothing
+  # fails when only one of them is, and the difference only shows on machines
+  # that have been running a while.
+  added=$(sed "s|__PLUGIN_DIR__|$plugin_dir|g" "$plugin_dir/defaults/permissions.json" \
+          | jq -c '.permissions.allow // []')
   tmp=$(mktemp "$state_dir/.settings.XXXXXX")
   if jq --argjson retire "$retired" --argjson add "$added" --argjson v "$policy_version" '
         .permissions.allow = (((.permissions.allow // []) - $retire) + $add | unique)

@@ -17,6 +17,15 @@ An adapter is called as `<name>.sh "<question>"` with this environment:
 | `COMPUTER_STATE_DIR`     | Scratch/state directory for adapter bookkeeping  |
 | `COMPUTER_MODEL`         | Model to use; `default` = harness's own default  |
 | `COMPUTER_ACTIVITY_FILE` | Optional live progress log (see below)           |
+| `COMPUTER_TURN_ID`       | Unique id for this turn; scoped state dies with it |
+| `COMPUTER_MAX_ANSWER_BYTES` | Cap on the answer, in bytes (default 65536)   |
+| `COMPUTER_MAX_ANSWER_CHARS` | Cap in characters, where the adapter clips text rather than bytes (claude.sh, default 65536) |
+
+**Bound your output.** The panel reads a turn's stdout to EOF and only then
+clamps it, so an adapter that streams without end is held in the shell that
+draws the bar. Cap the answer as you produce it — `head -c` piped through
+`iconv -c -f UTF-8 -t UTF-8` (so the cut cannot land mid-character), or a
+clip inside whatever already parses the harness's output.
 
 Additionally, `<name>.sh --list-models` must print the selectable models,
 one `value|Label` per line, best/latest first — the first line is used as

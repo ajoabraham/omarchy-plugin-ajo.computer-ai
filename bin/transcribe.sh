@@ -61,11 +61,17 @@ run_stt() {
   # What it must not decide is the words. voxtype elides the transcript in
   # that line at 50 characters plus an ellipsis, so reading them from here
   # truncated every spoken turn longer than a short sentence.
-  local summary
+  local summary summary_text
   summary=$(printf '%s\n' "$out" | grep -a 'Transcription completed in' | tail -1)
-  if printf '%s' "$summary" | grep -q 'Transcription completed in [^:]*: ""[[:space:]]*$'; then
-    return
-  fi
+  summary_text=$(printf '%s' "$summary" \
+    | sed -n 's/.*Transcription completed in [^:]*: "\(.*\)"[[:space:]]*$/\1/p')
+
+  # Quotes with nothing between them: the one reliable signal of silence. The
+  # guard is on the line existing and parsing, so a build whose summary this
+  # cannot read falls through to the plain line rather than being called silent.
+  case $summary in
+    *'Transcription completed in'*'""'*) [ -n "$summary_text" ] || return ;;
+  esac
 
   if [ -n "$plain" ]; then
     printf '%s\n' "$plain"
@@ -74,7 +80,7 @@ run_stt() {
 
   # No plain line (a different voxtype build): the summary's text is all
   # there is. Possibly truncated, but a truncated transcript beats none.
-  printf '%s' "$summary" | sed -n 's/.*Transcription completed in [^:]*: "\(.*\)"[[:space:]]*$/\1/p'
+  printf '%s\n' "$summary_text"
 }
 
 # Whisper does not return nothing for silence; it returns its favourite

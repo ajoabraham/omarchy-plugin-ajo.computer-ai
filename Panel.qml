@@ -61,6 +61,9 @@ Panel {
   readonly property bool toneEnabled: svc ? svc.toneEnabled : true
   readonly property bool voiceApproval: svc ? svc.voiceApproval : true
   readonly property bool autoMode: svc ? svc.autoMode : false
+  // Whether the card on screen is one that can be answered "always".
+  readonly property bool confirmOffersAlways: pendingConfirm !== null
+    && String(pendingConfirm.always || "") !== ""
 
   readonly property var voiceOptions: svc ? svc.voiceOptions : []
   readonly property var agentOptions: svc ? svc.agentOptions : []
@@ -695,7 +698,7 @@ Panel {
           if (event.key === Qt.Key_Y) { root.resolveConfirm(true); event.accepted = true }
           else if (event.key === Qt.Key_N) { root.resolveConfirm(false); event.accepted = true }
           else if (event.key === Qt.Key_A && (event.modifiers & Qt.ShiftModifier)
-                   && root.pendingConfirm.always) {
+                   && root.confirmOffersAlways) {
             root.resolveConfirmAlways(); event.accepted = true
           }
           return
@@ -1446,13 +1449,12 @@ Panel {
           edgeColor: Qt.alpha(root.ember, 0.55)
           subject: root.pendingConfirm ? String(root.pendingConfirm.label || "") : ""
           explanation: root.pendingConfirm ? String(root.pendingConfirm.detail || "") : ""
-          footnote: root.pendingConfirm && root.pendingConfirm.always
+          footnote: root.confirmOffersAlways
             ? "Yes is for this command only. Always allow stays on until you turn it off in Settings."
             : "This one time only — it is not remembered."
           acceptLabel: "[Y] Do it"
           refuseLabel: "[N] No"
-          alwaysLabel: root.pendingConfirm && root.pendingConfirm.always
-            ? "[Shift+A] Always allow" : ""
+          alwaysLabel: root.confirmOffersAlways ? "[Shift+A] Always allow" : ""
           spokenHint: root.voiceApproval ? "or say “allow” / “deny”" : ""
           progress: root.confirmProgress
           onAccepted: root.resolveConfirm(true)

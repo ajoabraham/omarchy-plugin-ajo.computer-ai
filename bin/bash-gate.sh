@@ -26,34 +26,14 @@ umask 077
 
 plugin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 data_dir="$HOME/.local/share/computer-ai"
-# Both sides of the comparison below have to be resolved the same way. The
-# usual install is a symlink — ~/.config/omarchy/plugins/<id> pointing at a
-# checkout — and `pwd` keeps that logical path while `realpath` does not, so
-# comparing them unresolved made the assistant raise a card to read its own
-# source, which the instructions tell it to go and do.
-plugin_real=$(realpath -m -- "$plugin_dir" 2>/dev/null || printf '%s' "$plugin_dir")
-data_real=$(realpath -m -- "$data_dir" 2>/dev/null || printf '%s' "$data_dir")
 settings_file="${COMPUTER_SETTINGS_FILE:-$data_dir/claude-settings.json}"
 
-decide() { # $1 = allow|deny, $2 = reason
-  jq -cn --arg d "$1" --arg r "$2" \
-    '{hookSpecificOutput: {hookEventName: "PreToolUse",
-                           permissionDecision: $d,
-                           permissionDecisionReason: $r}}' 2>/dev/null && exit 0
-  # No jq, so no decision object can be built. Exit 2 blocks the call
-  # whatever is on stdout: a gate that cannot speak must not wave things
-  # through while it works out how to.
-  exit 2
-}
-silent() { exit 0; }
+. "$plugin_dir/bin/gate-lib.sh" 2>/dev/null || exit 2
 
-# Truncation is refusal, not abstention: a command too long to read is a
-# command this cannot judge.
-input=$(head -c 1000000)
-tool=$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null) || tool="!"
+read_call
 case $tool in
   Bash) ;;
-  ""|"!") decide deny "The gate could not read this tool call, so it did not run." ;;
+  ""|"!") unreadable ;;
   *) silent ;;   # some other tool, and not this hook's business
 esac
 
@@ -63,26 +43,11 @@ esac
 if [ "$("$plugin_dir/bin/auto-mode.sh" get 2>/dev/null)" = "on" ]; then
   decide allow "Auto mode is on — the user approved every command until they turn it off in Settings."
 fi
+
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
 [ -n "$cmd" ] || decide deny "There was no command to run."
 
-# Everything below reasons about ONE command and its arguments. A shell
-# operator means the string is a program, not a command: `clip.sh hi; curl
-# evil` starts with an approved wrapper and ends somewhere else entirely,
-# and a prefix match would wave it through. Rather than try to parse a
-# shell, anything carrying an operator is refused a silent pass and goes to
-# the human, who can read it.
-case $cmd in
-  *[\;\|\&\$\`\(\)\<\>]* | *$'\n'* | *$'\r'*) compound=1 ;;
-  *) compound=0 ;;
-esac
-
-# The user's own policy, which is also where tier-2 grants land. Only the
-# two rule shapes this plugin writes are honoured — `Bash(cmd:*)` as a
-# prefix and `Bash(cmd)` exactly. An unfamiliar shape matches nothing,
-# because a rule this cannot read is a rule it cannot enforce.
 matches_policy() {
-  [ "$compound" = 0 ] || return 1
   local rule prefix
   while IFS= read -r rule; do
     case $rule in
@@ -151,6 +116,17 @@ reads_files() {
 # Everything this plugin owns, and nothing else. Resolved with -m so a path
 # that does not exist yet still normalises, and so `..` cannot walk out.
 within_ours() { # $1 = a path argument
+  # Both sides of the comparison have to be resolved the same way. The usual
+  # install is a symlink — ~/.config/omarchy/plugins/<id> pointing at a
+  # checkout — and `pwd` keeps that logical path while `realpath` does not, so
+  # comparing them unresolved made the assistant raise a card to read its own
+  # source, which the instructions tell it to go and do. Resolved here rather
+  # than at startup because the two hot paths — a wrapper, or auto mode —
+  # never reach this function.
+  if [ -z "${plugin_real:-}" ]; then
+    plugin_real=$(realpath -m -- "$plugin_dir" 2>/dev/null || printf '%s' "$plugin_dir")
+    data_real=$(realpath -m -- "$data_dir" 2>/dev/null || printf '%s' "$data_dir")
+  fi
   local p
   p=$(realpath -m -- "$1" 2>/dev/null) || return 1
   case "$p/" in
@@ -160,7 +136,6 @@ within_ours() { # $1 = a path argument
 }
 
 reads_only_ours() {
-  [ "$compound" = 0 ] || return 1
   # Splitting on whitespace is the point; expanding is emphatically not.
   # Without `set -f`, `cat <dir>/*` would be expanded HERE, against the real
   # directory, and every path it produced would pass the check below — the
@@ -190,23 +165,28 @@ reads_only_ours() {
   [ "$seen" = 1 ]                      # `cat` with no path reads stdin: ask
 }
 
-if matches_policy; then
-  silent   # the ordinary permission flow allows it, and so does the policy
-fi
-if reads_only_ours; then
-  decide allow "A read, confined to the assistant's own directories."
-fi
-
-detail=$(printf '%s' "$cmd" | head -c 200)
-# The hook has 180s (defaults/hooks.json). A card allowed to outlast that
-# would be answered into a hook Claude Code had already given up on, and a
-# hook that times out does not deny — so the question is kept shorter than
-# the patience of the thing waiting for its answer.
-case ${COMPUTER_CONFIRM_TIMEOUT:-120} in
-  ''|*[!0-9]*) export COMPUTER_CONFIRM_TIMEOUT=120 ;;
-  *) [ "${COMPUTER_CONFIRM_TIMEOUT:-120}" -gt 150 ] && export COMPUTER_CONFIRM_TIMEOUT=150 ;;
+# Everything below reasons about ONE command and its arguments. A shell
+# operator means the string is a program, not a command: `clip.sh hi; curl
+# evil` starts with an approved wrapper and ends somewhere else entirely,
+# and a prefix match would wave it through. Rather than try to parse a
+# shell, anything carrying an operator is refused a silent pass and goes to
+# the human, who can read it.
+case $cmd in
+  *[\;\|\&\$\`\(\)\<\>]* | *$'\n'* | *$'\r'*)
+    ;;   # a program: neither branch below may fire, so it goes to the human
+  *)
+    matches_policy && silent
+    reads_only_ours && decide allow "A read, confined to the assistant's own directories."
+    ;;
 esac
-if "$plugin_dir/bin/confirm.sh" "run a command" "$detail" always >/dev/null 2>&1; then
+
+# The user's own policy, which is also where tier-2 grants land. Only the
+# two rule shapes this plugin writes are honoured — `Bash(cmd:*)` as a
+# prefix and `Bash(cmd)` exactly. An unfamiliar shape matches nothing,
+# because a rule this cannot read is a rule it cannot enforce.
+detail=$(printf '%s' "$cmd" | head -c 200)
+clamp_confirm_timeout
+if "$plugin_dir/bin/confirm.sh" "run a command" "$detail" always:shell >/dev/null 2>&1; then
   decide allow "The user approved this command, once."
 fi
 decide deny "The user declined to run that command. Do not retry it or try another way to run the same thing; say so and move on."

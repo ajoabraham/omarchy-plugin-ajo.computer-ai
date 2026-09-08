@@ -208,8 +208,10 @@ commands. Know the boundaries:
   Approving a site covers navigating and reading it for the rest of that turn
   only, so a long browsing task is one card per site instead of one per click;
   the things you cannot take back stay one card each, every time. A browser
-  tool nobody has classified yet is refused, not assumed harmless. If the gate
-  cannot be installed, the turn runs without browser tools at all.
+  tool nobody has classified yet is refused, not assumed harmless. If the
+  gates cannot be installed the turn does not run at all — the shell gate is
+  what holds the wrapper policy up, so a turn without them is a turn with an
+  unenforced allowlist.
 - Web fetches normally run on the agent harness's own infrastructure.
   `bin/localfetch.sh` runs them from here instead — which is the point, since
   a page then sees your address and region — but it also means it reaches what

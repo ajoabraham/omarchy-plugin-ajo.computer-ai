@@ -155,15 +155,13 @@ else
     # Not the exact words — whisper is allowed its own spelling. The
     # invariant is that a 61-character sentence does not come back as 53
     # characters ending in an ellipsis.
-    case ${#got}:$got in
-      *:*...) fail=$((fail + 1)); printf '  FAIL real voxtype: elided -> [%s]\n' "$got" ;;
-      *)
-        if [ "${#got}" -gt 53 ]; then
-          pass=$((pass + 1)); printf '  ok   %-44s %3d chars\n' "real voxtype: heard it whole" "${#got}"
-        else
-          fail=$((fail + 1)); printf '  FAIL real voxtype: only %d chars -> [%s]\n' "${#got}" "$got"
-        fi ;;
-    esac
+    if [ "${got%...}" != "$got" ]; then
+      fail=$((fail + 1)); printf '  FAIL real voxtype: elided -> [%s]\n' "$got"
+    elif [ "${#got}" -le 53 ]; then
+      fail=$((fail + 1)); printf '  FAIL real voxtype: only %d chars -> [%s]\n' "${#got}" "$got"
+    else
+      pass=$((pass + 1)); printf '  ok   %-44s %3d chars\n' "real voxtype: heard it whole" "${#got}"
+    fi
   else
     printf '  --   real voxtype: skipped (synthesis failed)\n'
   fi

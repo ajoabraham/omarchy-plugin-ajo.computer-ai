@@ -16,54 +16,15 @@ set -u
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
-pass=0; fail=0
+. "$repo/tests/lib.sh"
+sandbox
 
-export HOME="$work/home"
-state="$HOME/.local/share/computer-ai/state"
-mkdir -p "$state" "$work/bin"
-export COMPUTER_STATE_DIR="$state"
-export COMPUTER_ACTIVITY_FILE="$state/activity.jsonl"
-
-# confirm.sh opens the panel so a human can see the card. Right in
-# production, wrong in a test on someone's desktop.
-printf '#!/bin/sh\nexit 0\n' > "$work/bin/omarchy-shell"
-chmod +x "$work/bin/omarchy-shell"
-export PATH="$work/bin:$PATH"
-export OMARCHY_PATH="$work"
-
-# Stand in for the panel: answer the next card that appears.
-answer_next() { # $1 = allow|deny
-  ( for _ in $(seq 1 200); do
-      id=$(jq -r 'select(.kind == "confirm") | .id' "$state/pending-confirms.jsonl" 2>/dev/null | tail -1)
-      if [ -n "$id" ] && [ "$id" != "null" ]; then
-        printf '%s' "$1" > "$state/confirm-$id"; exit 0
-      fi
-      sleep 0.05
-    done ) &
-}
-
-call() { # $1 = tool, $2 = JSON tool_input -> the hook's decision, or "(silent)"
-  local out
-  out=$(jq -cn --arg t "mcp__claude-in-chrome__$1" --argjson i "$2" \
-          '{hook_event_name: "PreToolUse", tool_name: $t, tool_input: $i}' \
-        | "$repo/bin/chrome-gate.sh")
-  [ -n "$out" ] || { echo "(silent)"; return; }
-  printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // "(unparsable)"'
-}
-
-check() { # description, expected, actual
-  if [ "$3" = "$2" ]; then
-    pass=$((pass + 1)); printf '  ok   %-52s %s\n' "$1" "$2"
-  else
-    fail=$((fail + 1)); printf '  FAIL %-52s got %s, wanted %s\n' "$1" "$3" "$2"
-  fi
-}
+call() { hook_decision "$repo/bin/chrome-gate.sh" "mcp__claude-in-chrome__$1" "$2"; }
 
 export COMPUTER_TURN_ID="turn-one"
-# Unanswered questions fail fast, and closed. The deadline is compared in
-# whole seconds, so a card that is meant to be ANSWERED gets a few of them —
-# at 1s the window can round away to nothing before the panel replies.
-export COMPUTER_CONFIRM_TIMEOUT=1
+# Cards are answered rather than waited out; the one case that tests expiry
+# asks for it with card_answer=none.
+export COMPUTER_CONFIRM_TIMEOUT=5
 
 echo "reading a page is free:"
 check "read_page"          "(silent)" "$(call read_page '{}')"
@@ -72,15 +33,14 @@ check "tabs_context_mcp"   "(silent)" "$(call tabs_context_mcp '{}')"
 check "read_network_requests" "(silent)" "$(call read_network_requests '{}')"
 
 echo "acting on one asks first:"
-answer_next allow
 check "navigate, approved"  "allow" \
-  "$(COMPUTER_CONFIRM_TIMEOUT=5 call navigate '{"url":"https://ups.example/track"}')"
+  "$(card_answer=allow call navigate '{"url":"https://ups.example/track"}')"
 check "same site again, no second card" "allow" \
   "$(COMPUTER_CONFIRM_TIMEOUT=1 call navigate '{"url":"https://ups.example/other"}')"
 check "a different site asks again"     "deny" \
   "$(call navigate '{"url":"https://mail.example/inbox"}')"
 check "unanswered means no"             "deny" \
-  "$(call navigate '{"url":"https://shop.example/checkout"}')"
+  "$(COMPUTER_CONFIRM_TIMEOUT=1 card_answer=none call navigate '{"url":"https://shop.example/checkout"}')"
 
 echo "the site scope covers navigation, never the irreversible:"
 check "typing into a form still asks"   "deny" \
@@ -116,6 +76,15 @@ esac
 # blanket `mcp__claude-in-chrome` rule in its own policy file, which is user
 # data and never overwritten — so the migration has to reach in and take it
 # out, without touching the rules the user approved themselves.
+echo "what the gate reads silently is what the policy grants:"
+missing=""
+for verb in $("$repo/bin/chrome-gate.sh" --silent-tools); do
+  jq -e --arg r "mcp__claude-in-chrome__$verb" \
+    '.permissions.allow | index($r)' "$repo/defaults/permissions.json" >/dev/null 2>&1 ||
+      missing="$missing $verb"
+done
+check "every silent tool is in defaults/permissions.json" "" "$missing"
+
 echo "an install from before the gate loses the blanket grant:"
 old_home="$work/old-install"
 mkdir -p "$old_home/.config/omarchy" "$old_home/.local/share/computer-ai"
@@ -143,5 +112,4 @@ check "reading is granted in its place" "8" \
 check "a rule the user approved is untouched" "true" \
   "$(jq -c '.permissions.allow | index("Bash(/opt/mine/run.sh:*)") != null' "$migrated" 2>/dev/null)"
 
-printf '\n  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tally

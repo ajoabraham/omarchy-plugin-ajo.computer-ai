@@ -18,11 +18,12 @@ set -eu
 umask 077
 
 cfg="$HOME/.config/omarchy/computer.json"
-mkdir -p "$(dirname "$cfg")"
-[ -f "$cfg" ] || printf '{}\n' > "$cfg"
 
 case "${1:-get}" in
   get)
+    # bin/bash-gate.sh asks this before every single command the agent runs,
+    # so the read path does no more than read: no mkdir, no seeding, and a
+    # missing file simply means off.
     jq -r 'if .auto_mode == true then "on" else "off" end' "$cfg" 2>/dev/null || echo off
     ;;
   set)
@@ -31,6 +32,8 @@ case "${1:-get}" in
       off) want=false ;;
       *) echo "usage: auto-mode.sh set on|off" >&2; exit 2 ;;
     esac
+    mkdir -p "$(dirname "$cfg")"
+    [ -f "$cfg" ] || printf '{}\n' > "$cfg"
     # Staged beside the file it replaces, so the swap is an atomic rename on
     # the same filesystem — the same handling every other durable setting gets.
     tmp=$(mktemp "$(dirname "$cfg")/.computer.XXXXXX")

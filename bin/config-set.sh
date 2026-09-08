@@ -18,14 +18,11 @@ key=$1; val=$2
 # the next turn executes, so it has to be a bare name — no slash, no dot, no
 # semicolon — or this wrapper is a way to point a turn at any executable on
 # the machine without ever raising a card.
-name='"[A-Za-z0-9_-]\+"'
-token='"[A-Za-z0-9._:+-]\+"'
-number='-\?[0-9]\+'
 case $key in
-  agent)                            shape=$name ;;
-  voice|stt_model|model_*)          shape=$token ;;
+  agent)                            shape='"[A-Za-z0-9_-]\+"' ;;
+  voice|stt_model|model_*)          shape='"[A-Za-z0-9._:+-]\+"' ;;
   tone_enabled|voice_approval)      shape='true\|false' ;;
-  mic_threshold_db|mic_end_silence_ms) shape=$number ;;
+  mic_threshold_db|mic_end_silence_ms) shape='-\?[0-9]\+' ;;
   *) echo "config-set.sh: $key is not a key this may set" >&2; exit 2 ;;
 esac
 printf '%s' "$val" | grep -qx -- "$shape" || {
@@ -36,7 +33,7 @@ cfg="$HOME/.config/omarchy/computer.json"
 # Staged beside the file it replaces, so the swap is an atomic rename on the
 # same filesystem rather than a copy from /tmp.
 tmp=$(mktemp "$(dirname "$cfg")/.computer.XXXXXX")
-if jq --arg k "$1" --argjson v "$2" '.[$k] = $v' "$cfg" > "$tmp"; then
+if jq --arg k "$key" --argjson v "$val" '.[$k] = $v' "$cfg" > "$tmp"; then
   mv -f "$tmp" "$cfg"
 else
   rm -f "$tmp"

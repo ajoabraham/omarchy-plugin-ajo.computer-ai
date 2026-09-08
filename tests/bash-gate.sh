@@ -19,51 +19,21 @@ set -u
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
-pass=0; fail=0
-
-export HOME="$work/home"
-data="$HOME/.local/share/computer-ai"
-state="$data/state"
-mkdir -p "$state" "$work/bin"
-export COMPUTER_STATE_DIR="$state"
-export COMPUTER_ACTIVITY_FILE="$state/activity.jsonl"
-export COMPUTER_CONFIRM_TIMEOUT=1
-printf '#!/bin/sh\nexit 0\n' > "$work/bin/omarchy-shell"
-chmod +x "$work/bin/omarchy-shell"
-export PATH="$work/bin:$PATH"
-export OMARCHY_PATH="$work"
+. "$repo/tests/lib.sh"
+sandbox
 
 # The policy the gate enforces: the wrappers, exactly as ask.sh seeds them.
 export COMPUTER_SETTINGS_FILE="$work/policy.json"
 sed "s|__PLUGIN_DIR__|$repo|g" "$repo/defaults/permissions.json" > "$COMPUTER_SETTINGS_FILE"
 echo '{"activity":"line"}' > "$state/activity.jsonl"
 
-answer_next() { # $1 = allow|deny
-  ( for _ in $(seq 1 200); do
-      id=$(jq -r 'select(.kind == "confirm") | .id' "$state/pending-confirms.jsonl" 2>/dev/null | tail -1)
-      if [ -n "$id" ] && [ "$id" != "null" ]; then
-        printf '%s' "$1" > "$state/confirm-$id"; exit 0
-      fi
-      sleep 0.05
-    done ) &
-}
+export COMPUTER_TURN_ID="turn-one"
+# Cards are answered rather than waited out: an unanswered one costs a whole
+# second each, and there are thirty of them. The one case that genuinely
+# tests expiry says so with card_answer=none.
+export COMPUTER_CONFIRM_TIMEOUT=5
 
-run() { # $1 = command string -> allow | deny | (silent)
-  local out
-  out=$(jq -cn --arg c "$1" \
-          '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: $c}}' \
-        | "$repo/bin/bash-gate.sh")
-  [ -n "$out" ] || { echo "(silent)"; return; }
-  printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // "(unparsable)"'
-}
-
-check() { # description, expected, actual
-  if [ "$3" = "$2" ]; then
-    pass=$((pass + 1)); printf '  ok   %-54s %s\n' "$1" "$2"
-  else
-    fail=$((fail + 1)); printf '  FAIL %-54s got %s, wanted %s\n' "$1" "$3" "$2"
-  fi
-}
+run() { hook_decision "$repo/bin/bash-gate.sh" Bash "$(jq -cn --arg c "$1" '{command: $c}')"; }
 
 echo "the wrappers the policy names run without asking:"
 check "a wrapper with arguments"        "(silent)" "$(run "$repo/bin/clip.sh copy hello")"
@@ -123,18 +93,17 @@ check "bare ls, wherever it lands" "deny" "$(run "ls")"
 check "cat with no path is stdin"  "deny" "$(run "cat")"
 
 echo "anything else asks, and is refused if nobody answers:"
-answer_next allow
-check "an approved one-off runs" "allow" "$(COMPUTER_CONFIRM_TIMEOUT=5 run "ffmpeg -version")"
+check "an approved one-off runs" "allow" "$(card_answer=allow run "ffmpeg -version")"
 check "the same command asks again next time" "deny" "$(run "ffmpeg -version")"
 
 echo "the card offers the switch, and only this card does:"
 : > "$state/activity.jsonl"
 run "wget http://x.example" >/dev/null   # on no list, so it asks
-check "the shell card offers 'always'" "true" \
+check "the shell card names its switch" "shell" \
   "$(jq -r 'select(.kind == "confirm") | .always' "$state/activity.jsonl" | tail -1)"
 : > "$state/activity.jsonl"
 COMPUTER_STATE_DIR="$state" "$repo/bin/confirm.sh" "reboot" "now" >/dev/null 2>&1
-check "an ordinary tier-3 card does not"  "false" \
+check "an ordinary tier-3 card offers none" "" \
   "$(jq -r 'select(.kind == "confirm") | .always' "$state/activity.jsonl" | tail -1)"
 
 echo "auto mode runs everything, until it is switched off:"
@@ -159,6 +128,7 @@ check "auto-mode.sh is not pre-approved"  "deny" \
   "$(run "$repo/bin/auto-mode.sh set on")"
 
 echo "a refusal closes the door:"
+answer_next deny
 reason=$(jq -cn '{hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:{command:"rm -rf /tmp/x"}}' \
          | "$repo/bin/bash-gate.sh" | jq -r '.hookSpecificOutput.permissionDecisionReason')
 case $reason in
@@ -179,5 +149,4 @@ other=$(jq -cn '{hook_event_name:"PreToolUse",tool_name:"Read",tool_input:{file_
         | "$repo/bin/bash-gate.sh")
 check "a Read call passes through" "" "$other"
 
-printf '\n  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tally
