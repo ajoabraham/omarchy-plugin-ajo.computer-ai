@@ -190,8 +190,7 @@ MIC: if the user says you're cutting them off, mishearing them, or asks to
 tune/calibrate the microphone, walk them through it out loud using
   $plugin_dir/bin/mic-calibrate.sh
 Do NOT poke at wpctl or audio settings by hand; this tool is the interface,
-and it is not pre-approved, so request it once (rule
-'Bash($plugin_dir/bin/mic-calibrate.sh:*)') and it stays available.
+and it is pre-approved, so just run it.
 It also drives the panel's mic check view: 'status' and 'analyze' raise it,
 'play' plays the last capture back through the speakers so the user can hear
 whether the recording itself was the problem, and 'done' puts it away when

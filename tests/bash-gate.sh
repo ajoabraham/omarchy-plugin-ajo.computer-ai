@@ -4,11 +4,13 @@
 #   bash tests/bash-gate.sh
 #
 # The plugin's answer to "what may the agent run" is six argv-validating
-# wrappers, handed to the CLI as --allowedTools. That flag turned out not to
-# deny what it omits: on Claude Code 2.1.251, `--allowedTools Read
-# --permission-mode default` still ran `id -un` through Bash. bin/bash-gate.sh
-# is what actually enforces it, as a PreToolUse hook, and this is where that
-# claim is checked.
+# wrappers, handed to the CLI as --allowedTools. That flag does not constrain
+# the Bash tool: on Claude Code 2.1.251, `--allowedTools Read
+# --permission-mode default` still ran `id -un`, because a command judged
+# read-only is auto-approved. (An omitted Write IS denied, so this is Bash's
+# own behaviour rather than the flag's — and Bash is what every wrapper is.)
+# bin/bash-gate.sh is what actually enforces the policy, as a PreToolUse
+# hook, and this is where that claim is checked.
 #
 # As in tests/chrome-gate.sh, the card is answered by writing the verdict file
 # bin/confirm.sh polls for, so no panel opens; refusals are made by letting the
@@ -96,6 +98,23 @@ check "its activity log"      "allow" "$(run "cat $state/activity.jsonl")"
 check "a listing of its state" "allow" "$(run "ls -la $state")"
 check "jq's filter is not a path" "allow" "$(run "jq -r .activity $state/activity.jsonl")"
 
+echo "a command that reads no files has to still read no files:"
+check "date with a format"      "allow" "$(run "date +%H:%M")"
+check "date -u"                 "allow" "$(run "date -u")"
+check "id -un, the one that got in" "allow" "$(run "id -un")"
+# `date -f FILE` reads any file and echoes the lines it cannot parse back as
+# error text, which the tool result hands to the model.
+check "date -f, which reads a file" "deny" "$(run "date -f $HOME/.ssh/id_rsa")"
+check "date -r, likewise"           "deny" "$(run "date -r $HOME/.ssh/id_rsa")"
+check "uname with a long option"    "deny" "$(run "uname --kernel-name=x")"
+
+echo "the install is usually a symlink, and reading its own source still works:"
+ln -sfn "$repo" "$work/linked"
+linked=$(jq -cn --arg c "cat $repo/README.md" \
+           '{hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:{command:$c}}' \
+         | "$work/linked/bin/bash-gate.sh" | jq -r '.hookSpecificOutput.permissionDecision')
+check "through the link, reading the real path" "allow" "$linked"
+
 echo "and nowhere else:"
 check "a private key"          "deny" "$(run "cat $HOME/.ssh/id_rsa")"
 check "walking out with .."    "deny" "$(run "cat $data/../../.ssh/id_rsa")"
@@ -146,6 +165,14 @@ case $reason in
   *declined*"another way"*) pass=$((pass + 1)); printf '  ok   %-54s\n' "and says so to the agent" ;;
   *) fail=$((fail + 1)); printf '  FAIL deny reason was [%s]\n' "$reason" ;;
 esac
+
+echo "input it cannot read is refused, not waved through:"
+mangled=$(printf '%s' '{"tool_name":"Bash","tool_input":' | "$repo/bin/bash-gate.sh" \
+          | jq -r '.hookSpecificOutput.permissionDecision // "(none)"' 2>/dev/null)
+check "truncated JSON"          "deny" "$mangled"
+empty=$(printf '%s' '{}' | "$repo/bin/bash-gate.sh" \
+        | jq -r '.hookSpecificOutput.permissionDecision // "(none)"' 2>/dev/null)
+check "no tool name at all"     "deny" "$empty"
 
 echo "tools other than Bash are none of its business:"
 other=$(jq -cn '{hook_event_name:"PreToolUse",tool_name:"Read",tool_input:{file_path:"/etc/passwd"}}' \

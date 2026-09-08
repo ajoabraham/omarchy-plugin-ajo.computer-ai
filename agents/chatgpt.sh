@@ -32,6 +32,18 @@ trap 'rm -f "$out"' EXIT
 max_answer_bytes="${COMPUTER_MAX_ANSWER_BYTES:-65536}"
 case "$max_answer_bytes" in ''|*[!0-9]*) max_answer_bytes=65536 ;; esac
 
+# The cap counts bytes and can therefore split a multi-byte character; the
+# panel would decode the remnant and speak it. Drop a trailing half-character.
+scrub() {
+  if command -v iconv >/dev/null 2>&1; then
+    # iconv reports the dropped remnant as an error; the bytes before it are
+    # already written, and a truncated tail is not a failed turn.
+    iconv -c -f UTF-8 -t UTF-8 2>/dev/null || true
+  else
+    cat
+  fi
+}
+
 prompt="$COMPUTER_INSTRUCTIONS
 
 NOTE: In this harness you run with a read-only sandbox — you can look things
@@ -42,7 +54,7 @@ Request: $1"
 if [ "$COMPUTER_CONV_STARTED" = "1" ]; then
   if codex exec resume --last - -s read-only --skip-git-repo-check "${model_flags[@]}" -o "$out" \
     <<<"Request: $1" >/dev/null 2>&1 && [ -s "$out" ]; then
-    head -c "$max_answer_bytes" "$out"
+    head -c "$max_answer_bytes" "$out" | scrub
     exit 0
   fi
 fi
@@ -52,4 +64,4 @@ if [ ! -s "$out" ]; then
   echo "The ChatGPT harness couldn't answer. It's usually not signed in — run codex login in a terminal, then try me again."
   exit 0
 fi
-head -c "$max_answer_bytes" "$out"
+head -c "$max_answer_bytes" "$out" | scrub

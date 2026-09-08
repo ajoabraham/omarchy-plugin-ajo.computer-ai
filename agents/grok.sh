@@ -39,9 +39,22 @@ case "$max_answer_bytes" in ''|*[!0-9]*) max_answer_bytes=65536 ;; esac
 # Being cut off by the cap is not a failed turn: grok dies of SIGPIPE having
 # already said more than will ever be spoken, and the resume branch below
 # must not read that as "resume failed" and ask the whole question again.
+# The cap counts bytes, so it can land in the middle of a multi-byte
+# character and leave half of one at the end of the reply — which the panel
+# then decodes and hands to the speech synthesiser. Drop any such remnant.
+scrub() {
+  if command -v iconv >/dev/null 2>&1; then
+    # iconv reports the dropped remnant as an error; the bytes before it are
+    # already written, and a truncated tail is not a failed turn.
+    iconv -c -f UTF-8 -t UTF-8 2>/dev/null || true
+  else
+    cat
+  fi
+}
+
 bounded() {
   local rc
-  "$@" 2>/dev/null | head -c "$max_answer_bytes"
+  "$@" 2>/dev/null | head -c "$max_answer_bytes" | scrub
   rc=${PIPESTATUS[0]}
   [ "$rc" = 141 ] && rc=0
   return "$rc"

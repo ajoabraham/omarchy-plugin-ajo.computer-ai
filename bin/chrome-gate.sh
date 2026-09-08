@@ -30,18 +30,22 @@ decide() { # $1 = allow|deny, $2 = reason shown to the agent
   jq -cn --arg d "$1" --arg r "$2" \
     '{hookSpecificOutput: {hookEventName: "PreToolUse",
                            permissionDecision: $d,
-                           permissionDecisionReason: $r}}'
-  exit 0
+                           permissionDecisionReason: $r}}' 2>/dev/null && exit 0
+  # No jq, so no decision object. Exit 2 blocks the call regardless of what
+  # reached stdout — a gate that cannot speak must not abstain.
+  exit 2
 }
 
 # No decision: the tool goes through the ordinary policy check, which is
 # where the read-only browser tools are allowed.
 silent() { exit 0; }
 
+# Truncation is refusal: a call too long to read is a call this cannot judge.
 input=$(head -c 1000000)
-tool=$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null)
+tool=$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null) || tool="!"
 case "$tool" in
   mcp__claude-in-chrome__*) verb=${tool#mcp__claude-in-chrome__} ;;
+  ""|"!") decide deny "The gate could not read this tool call, so it did not run." ;;
   *) silent ;;   # not ours to judge
 esac
 
@@ -49,8 +53,7 @@ esac
 # can do, the agent could already do by being told what the page said.
 case "$verb" in
   tabs_context_mcp|list_connected_browsers|read_page|get_page_text|find|\
-  read_console_messages|read_network_requests|shortcuts_list|select_browser|\
-  switch_browser)
+  read_console_messages|read_network_requests|shortcuts_list)
     silent ;;
 esac
 
@@ -116,6 +119,13 @@ if [ -n "$scopeable" ]; then
   detail="$scopeable — approving covers this site for this turn only"
 fi
 
+# Kept under the hook's own 180s deadline: a card answered after Claude Code
+# has given up on the hook is answered into nothing, and a hook that times
+# out does not deny.
+case ${COMPUTER_CONFIRM_TIMEOUT:-120} in
+  ''|*[!0-9]*) export COMPUTER_CONFIRM_TIMEOUT=120 ;;
+  *) [ "${COMPUTER_CONFIRM_TIMEOUT:-120}" -gt 150 ] && export COMPUTER_CONFIRM_TIMEOUT=150 ;;
+esac
 if "$plugin_dir/bin/confirm.sh" "$label" "$detail" >/dev/null 2>&1; then
   [ -n "$scopeable" ] && [ -n "$scope_file" ] &&
     printf '%s\n' "$scopeable" >> "$scope_file" 2>/dev/null

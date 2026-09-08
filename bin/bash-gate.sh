@@ -3,11 +3,13 @@
 #
 # The policy in claude-settings.json says the pre-approved surface is six
 # argv-validating wrappers. It was handed to the CLI as --allowedTools and
-# assumed to be exhaustive. It is not: in headless mode a tool that is
-# absent from --allowedTools still runs, which was measured on 2.1.251 —
-# `--allowedTools Read --permission-mode default` happily ran `id -un`
-# through Bash. So the allowlist described a boundary that nothing enforced,
-# and the wrappers it names were a convention, not a gate.
+# assumed to be exhaustive. For the Bash tool it is not: measured on 2.1.251,
+# `--allowedTools Read --permission-mode default` still ran `id -un` through
+# Bash, because a command the CLI judges read-only is auto-approved. (Other
+# tools do honour the list — an omitted Write is denied — so the hole is
+# specific to Bash, which is the one that matters here: every wrapper in the
+# policy is a Bash command.) So for the tool the whole tier-1 surface is made
+# of, the allowlist described a boundary that nothing enforced.
 #
 # This is the gate. Three outcomes:
 #
@@ -24,19 +26,36 @@ umask 077
 
 plugin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 data_dir="$HOME/.local/share/computer-ai"
+# Both sides of the comparison below have to be resolved the same way. The
+# usual install is a symlink — ~/.config/omarchy/plugins/<id> pointing at a
+# checkout — and `pwd` keeps that logical path while `realpath` does not, so
+# comparing them unresolved made the assistant raise a card to read its own
+# source, which the instructions tell it to go and do.
+plugin_real=$(realpath -m -- "$plugin_dir" 2>/dev/null || printf '%s' "$plugin_dir")
+data_real=$(realpath -m -- "$data_dir" 2>/dev/null || printf '%s' "$data_dir")
 settings_file="${COMPUTER_SETTINGS_FILE:-$data_dir/claude-settings.json}"
 
 decide() { # $1 = allow|deny, $2 = reason
   jq -cn --arg d "$1" --arg r "$2" \
     '{hookSpecificOutput: {hookEventName: "PreToolUse",
                            permissionDecision: $d,
-                           permissionDecisionReason: $r}}'
-  exit 0
+                           permissionDecisionReason: $r}}' 2>/dev/null && exit 0
+  # No jq, so no decision object can be built. Exit 2 blocks the call
+  # whatever is on stdout: a gate that cannot speak must not wave things
+  # through while it works out how to.
+  exit 2
 }
 silent() { exit 0; }
 
+# Truncation is refusal, not abstention: a command too long to read is a
+# command this cannot judge.
 input=$(head -c 1000000)
-[ "$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null)" = "Bash" ] || silent
+tool=$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null) || tool="!"
+case $tool in
+  Bash) ;;
+  ""|"!") decide deny "The gate could not read this tool call, so it did not run." ;;
+  *) silent ;;   # some other tool, and not this hook's business
+esac
 
 # Auto mode: the user has said yes to all of this, until they say otherwise.
 # Read from the config every time rather than cached anywhere, so turning it
@@ -89,9 +108,32 @@ matches_policy() {
 # reading an ssh key is the path, so the path is what is checked. Commands
 # that read no files at all are listed separately, since they have no path
 # to check.
-inspects_nothing() { # no arguments that could name a file
-  case $1 in
-    date|uptime|uname|hostname|whoami|id|pwd|locale|echo|printf|true|seq) return 0 ;;
+# "Reads no files" is a claim about a command AND its arguments, never about
+# a name on its own: `date -f /home/you/.ssh/id_rsa` reads the key and echoes
+# every line it cannot parse back as an error message. So each of these says
+# which arguments keep it true.
+inspects_nothing() { # $1 = program, $@ = its arguments
+  local prog=$1; shift
+  local a
+  case $prog in
+    echo|printf|seq|true)
+      return 0 ;;                      # cannot open a file whatever it is handed
+    date)
+      for a in "$@"; do
+        case $a in
+          +*|-u|--utc|--universal) ;;   # a format, or the timezone switch
+          *) return 1 ;;                # -f, -d, -r and anything unfamiliar
+        esac
+      done
+      return 0 ;;
+    uptime|uname|hostname|whoami|id|pwd|locale)
+      for a in "$@"; do
+        case $a in
+          -[A-Za-z][A-Za-z]*|-[A-Za-z]) ;;   # short flags, which take no value here
+          *) return 1 ;;
+        esac
+      done
+      return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -112,7 +154,7 @@ within_ours() { # $1 = a path argument
   local p
   p=$(realpath -m -- "$1" 2>/dev/null) || return 1
   case "$p/" in
-    "$plugin_dir"/*|"$data_dir"/*) return 0 ;;
+    "$plugin_real"/*|"$data_real"/*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -128,7 +170,7 @@ reads_only_ours() {
   set -- $cmd
   set +f
   local prog=$1; shift
-  inspects_nothing "$prog" && return 0   # nothing to confine: it reads no files
+  inspects_nothing "$prog" "$@" && return 0   # nothing to confine: it reads no files
   reads_files "$prog" || return 1
   # jq's first non-flag argument is a filter, not a file. Every other
   # argument to every command here is a path.
@@ -156,6 +198,14 @@ if reads_only_ours; then
 fi
 
 detail=$(printf '%s' "$cmd" | head -c 200)
+# The hook has 180s (defaults/hooks.json). A card allowed to outlast that
+# would be answered into a hook Claude Code had already given up on, and a
+# hook that times out does not deny — so the question is kept shorter than
+# the patience of the thing waiting for its answer.
+case ${COMPUTER_CONFIRM_TIMEOUT:-120} in
+  ''|*[!0-9]*) export COMPUTER_CONFIRM_TIMEOUT=120 ;;
+  *) [ "${COMPUTER_CONFIRM_TIMEOUT:-120}" -gt 150 ] && export COMPUTER_CONFIRM_TIMEOUT=150 ;;
+esac
 if "$plugin_dir/bin/confirm.sh" "run a command" "$detail" always >/dev/null 2>&1; then
   decide allow "The user approved this command, once."
 fi

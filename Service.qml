@@ -842,8 +842,12 @@ Item {
   Process {
     id: micProc
     command: ["bash", "-c",
-      "jq -r '[(.mic_threshold_db // \"\"), (.mic_end_silence_ms // \"\"), (.tone_enabled // \"\"), " +
-      "(.voice_approval // \"\"), (.auto_mode // \"\")] | @tsv' " +
+      // `// ""` is wrong for a boolean: jq's alternative operator fires on
+      // false as well as null, so a setting the user turned OFF read back as
+      // "unset" and silently returned to its default on the next reload.
+      // tostring keeps false as "false" and absence as "null".
+      "jq -r '[(.mic_threshold_db // \"\"), (.mic_end_silence_ms // \"\"), " +
+      "(.tone_enabled|tostring), (.voice_approval|tostring), (.auto_mode|tostring)] | @tsv' " +
       "\"$HOME/.config/omarchy/computer.json\" 2>/dev/null"]
     stdout: StdioCollector {
       waitForEnd: true
@@ -854,9 +858,9 @@ Item {
         if (!isNaN(thr)) root.speechThresholdDb = Math.max(-70, Math.min(-20, thr))
         if (!isNaN(sil)) root.endSilenceMs = Math.max(800, Math.min(5000, sil))
         var te = String(parts[2] || "").trim()
-        if (te !== "") root.toneEnabled = (te !== "false")
+        if (te === "true" || te === "false") root.toneEnabled = (te === "true")
         var va = String(parts[3] || "").trim()
-        if (va !== "") root.voiceApproval = (va !== "false")
+        if (va === "true" || va === "false") root.voiceApproval = (va === "true")
         var am = String(parts[4] || "").trim()
         root.autoMode = (am === "true")
       }

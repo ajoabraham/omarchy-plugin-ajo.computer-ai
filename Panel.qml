@@ -1446,7 +1446,9 @@ Panel {
           edgeColor: Qt.alpha(root.ember, 0.55)
           subject: root.pendingConfirm ? String(root.pendingConfirm.label || "") : ""
           explanation: root.pendingConfirm ? String(root.pendingConfirm.detail || "") : ""
-          footnote: "This one time only — it is not remembered."
+          footnote: root.pendingConfirm && root.pendingConfirm.always
+            ? "Yes is for this command only. Always allow stays on until you turn it off in Settings."
+            : "This one time only — it is not remembered."
           acceptLabel: "[Y] Do it"
           refuseLabel: "[N] No"
           alwaysLabel: root.pendingConfirm && root.pendingConfirm.always

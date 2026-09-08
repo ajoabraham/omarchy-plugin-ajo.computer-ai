@@ -27,8 +27,12 @@
 #   set-silence <ms>          end-of-speech silence window (clamped 800..5000)
 #   auto                      measure last turn's audio and pick a gain
 #
-# Not pre-approved: it changes system audio and listening behaviour, so it
-# runs behind a one-time panel grant like the other privileged helpers here.
+# Pre-approved (tier 1), because the assistant is expected to reach for this
+# mid-conversation — "you keep cutting me off" is a thing people say out loud,
+# and a card in the middle of fixing the microphone helps nobody. What keeps
+# that safe is the grammar: a fixed table of verbs, and every value clamped
+# to a range (gain 0..3, threshold -70..-20 dBFS, silence 800..5000ms) before
+# it reaches wpctl or the config.
 set -u
 umask 077
 

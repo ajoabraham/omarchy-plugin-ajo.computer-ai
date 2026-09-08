@@ -169,10 +169,12 @@ commands. Know the boundaries:
     the agent has no pre-approved path to granting itself auto mode. It
     changes nothing about the browser gate, tier 2 or tier 3.
   - The tiers are enforced, not merely declared. The policy used to be handed
-    to the CLI as `--allowedTools` and assumed to be exhaustive; it is not.
-    Measured on Claude Code 2.1.251, `--allowedTools Read --permission-mode
-    default` still ran `id -un` through the Bash tool, so a list of wrappers
-    was a convention rather than a boundary. `bin/bash-gate.sh` closes that
+    to the CLI as `--allowedTools` and assumed to be exhaustive. For the Bash
+    tool it is not: measured on Claude Code 2.1.251, `--allowedTools Read
+    --permission-mode default` still ran `id -un`, because a command the CLI
+    judges read-only is auto-approved. Other tools do honour the list — an
+    omitted `Write` is denied — so the gap is specific to Bash, which is
+    exactly the tool every wrapper in tier 1 is made of. `bin/bash-gate.sh` closes that
     as a `PreToolUse` hook: a command matching a rule in your policy runs, a
     read confined to the plugin's own directories runs, and anything else
     blocks on the tier-3 card. Since a hook decides ahead of the permission
