@@ -205,6 +205,10 @@ Item {
   // effect on the next one rather than on the next turn.
   property bool autoMode: false
 
+  // The same thing for the browser, kept separate because they are separate
+  // risks: one runs commands, the other acts in your logged-in sessions.
+  property bool autoModeBrowser: false
+
   // --- what the agent is doing right now ---
 
   // Adapters that can watch their harness append a line per step to
@@ -868,7 +872,8 @@ Item {
       "jq -r --arg s \"$src\" " +
       "'[((.mic_thresholds[$s] // .mic_threshold_db // \"\")|tostring), " +
       "(.mic_end_silence_ms // \"\"), " +
-      "(.tone_enabled|tostring), (.voice_approval|tostring), (.auto_mode|tostring)] | @tsv' " +
+      "(.tone_enabled|tostring), (.voice_approval|tostring), " +
+      "(.auto_mode|tostring), (.auto_mode_browser|tostring)] | @tsv' " +
       "\"$HOME/.config/omarchy/computer.json\" 2>/dev/null"]
     stdout: StdioCollector {
       waitForEnd: true
@@ -884,6 +889,8 @@ Item {
         if (va === "true" || va === "false") root.voiceApproval = (va === "true")
         var am = String(parts[4] || "").trim()
         root.autoMode = (am === "true")
+        var ab = String(parts[5] || "").trim()
+        root.autoModeBrowser = (ab === "true")
       }
     }
   }
@@ -1306,20 +1313,25 @@ Item {
   // the same one the voice, agent and toggle helpers use. Which script it
   // runs is what carries the security argument above, not which Process
   // object runs it.
-  function setAutoMode(on) {
-    autoMode = on
-    setConfigProc.command = [binDir + "/auto-mode.sh", "set", on ? "on" : "off"]
+  function setAutoMode(scope, on) {
+    if (scope === "browser") autoModeBrowser = on
+    else autoMode = on
+    setConfigProc.command = [binDir + "/auto-mode.sh", "set", scope, on ? "on" : "off"]
     setConfigProc.running = true
   }
 
   function resolveConfirmAlways() {
     if (pendingConfirm === null) return
-    // Answering "always" means whatever the gate that asked said it means.
-    if (pendingConfirm.always === "shell") setAutoMode(true)
+    // Answering "always" means whatever the gate that asked said it means —
+    // the browser's button must never switch off the shell's gate.
+    var scope = String(pendingConfirm.always || "")
+    if (scope === "shell" || scope === "browser") setAutoMode(scope, true)
     resolveConfirm(true)
   }
 
-  function toggleAutoMode() { setAutoMode(!autoMode) }
+  function toggleAutoMode(scope) {
+    setAutoMode(scope, scope === "browser" ? !autoModeBrowser : !autoMode)
+  }
 
   function toggleTone() {
     toneEnabled = !toneEnabled

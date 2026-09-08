@@ -76,6 +76,25 @@ esac
 # blanket `mcp__claude-in-chrome` rule in its own policy file, which is user
 # data and never overwritten — so the migration has to reach in and take it
 # out, without touching the rules the user approved themselves.
+echo "the browser card offers its own switch, and only its own:"
+: > "$state/activity.jsonl"
+call navigate '{"url":"https://token.example/"}' >/dev/null
+check "the browser card names its switch" "browser" \
+  "$(jq -r 'select(.kind == "confirm") | .always' "$state/activity.jsonl" | tail -1)"
+
+echo "browser auto mode acts without asking, until it is switched off:"
+mkdir -p "$HOME/.config/omarchy"
+echo '{"auto_mode_browser":true}' > "$HOME/.config/omarchy/computer.json"
+check "clicking no longer asks"    "allow" "$(call computer '{"action":"left_click"}')"
+check "nor does typing"            "allow" "$(call form_input '{"element_description":"q","value":"hi"}')"
+check "nor navigating"             "allow" "$(call navigate '{"url":"https://anywhere.example/"}')"
+check "reading is still silent"    "(silent)" "$(call read_page '{}')"
+# The two switches are separate risks; one must not answer for the other.
+echo '{"auto_mode":true}' > "$HOME/.config/omarchy/computer.json"
+check "the shell's switch does not open the browser" "deny" \
+  "$(call computer '{"action":"left_click"}')"
+rm -f "$HOME/.config/omarchy/computer.json"
+
 echo "what the gate reads silently is what the policy grants:"
 missing=""
 for verb in $("$repo/bin/chrome-gate.sh" --silent-tools); do

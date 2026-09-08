@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Auto mode: run whatever the agent asks the shell to run, without a card.
 #
-#   auto-mode.sh get         → on | off
-#   auto-mode.sh set on|off
+#   auto-mode.sh get [shell|browser]         → on | off
+#   auto-mode.sh set [shell|browser] on|off
+#
+# Two scopes, because they are two different risks. "shell" is every command
+# the agent runs; "browser" is every action it takes in your logged-in
+# Chromium. Saying yes to one is not saying yes to the other, and the card
+# that offers each says which it is.
 #
 # This is the one switch that turns the tier-1 gate off, so who may throw it
 # matters more than what it does. It is deliberately NOT one of the
@@ -19,30 +24,43 @@ umask 077
 
 cfg="$HOME/.config/omarchy/computer.json"
 
-case "${1:-get}" in
+# Scope is optional and defaults to shell, so the original two-word form
+# (`get`, `set on`) still means what it always meant.
+verb=${1:-get}
+scope=shell
+value=${2:-}
+case "${2:-}" in
+  shell|browser) scope=$2; value=${3:-} ;;
+esac
+case "$scope" in
+  shell)   key=auto_mode ;;
+  browser) key=auto_mode_browser ;;
+esac
+
+case "$verb" in
   get)
     # bin/bash-gate.sh asks this before every single command the agent runs,
     # so the read path does no more than read: no mkdir, no seeding, and a
     # missing file simply means off.
-    jq -r 'if .auto_mode == true then "on" else "off" end' "$cfg" 2>/dev/null || echo off
+    jq -r --arg k "$key" 'if .[$k] == true then "on" else "off" end' "$cfg" 2>/dev/null || echo off
     ;;
   set)
-    case "${2:-}" in
+    case "$value" in
       on)  want=true ;;
       off) want=false ;;
-      *) echo "usage: auto-mode.sh set on|off" >&2; exit 2 ;;
+      *) echo "usage: auto-mode.sh set [shell|browser] on|off" >&2; exit 2 ;;
     esac
     mkdir -p "$(dirname "$cfg")"
     [ -f "$cfg" ] || printf '{}\n' > "$cfg"
     # Staged beside the file it replaces, so the swap is an atomic rename on
     # the same filesystem — the same handling every other durable setting gets.
     tmp=$(mktemp "$(dirname "$cfg")/.computer.XXXXXX")
-    if jq --argjson v "$want" '.auto_mode = $v' "$cfg" > "$tmp"; then
+    if jq --arg k "$key" --argjson v "$want" '.[$k] = $v' "$cfg" > "$tmp"; then
       mv -f "$tmp" "$cfg"
-      echo "auto mode -> $2"
+      echo "$scope auto mode -> $value"
     else
       rm -f "$tmp"; exit 1
     fi
     ;;
-  *) echo "usage: auto-mode.sh [get | set on|off]" >&2; exit 2 ;;
+  *) echo "usage: auto-mode.sh [get|set] [shell|browser] [on|off]" >&2; exit 2 ;;
 esac

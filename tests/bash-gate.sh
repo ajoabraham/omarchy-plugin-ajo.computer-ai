@@ -134,6 +134,11 @@ check "switching it off restores the card, on the next command" "deny" \
   "$(run "curl https://example.com")"
 rm -f "$HOME/.config/omarchy/computer.json"
 
+# and the browser's switch is not the shell's
+echo '{"auto_mode_browser":true}' > "$HOME/.config/omarchy/computer.json"
+check "the browser switch does not open the shell" "deny" "$(run "curl https://example.com")"
+rm -f "$HOME/.config/omarchy/computer.json"
+
 echo "and the agent cannot switch it on for itself:"
 check "config-set refuses the key"        "2" \
   "$(bash "$repo/bin/config-set.sh" auto_mode true >/dev/null 2>&1; echo $?)"

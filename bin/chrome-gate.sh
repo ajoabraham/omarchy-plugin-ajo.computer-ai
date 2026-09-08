@@ -50,6 +50,15 @@ for t in $silent_tools; do
   [ "$t" = "$verb" ] && silent
 done
 
+# Browser auto mode: the user has said yes to acting in the browser until
+# they say otherwise. Read per call, so switching it off in Settings takes
+# effect on the next action rather than the next turn. Separate from the
+# shell's switch on purpose — these are two different risks, and saying yes
+# to one is not saying yes to the other.
+if [ "$("$plugin_dir/bin/auto-mode.sh" get browser 2>/dev/null)" = "on" ]; then
+  decide allow "Browser auto mode is on — the user approved acting in the browser until they turn it off in Settings."
+fi
+
 field() { printf '%s' "$input" | jq -rc --arg k "$1" '.tool_input[$k] // ""' 2>/dev/null; }
 
 # Only the two navigating verbs have a URL; asking for one on every `computer`
@@ -118,7 +127,7 @@ if [ -n "$scopeable" ]; then
 fi
 
 clamp_confirm_timeout
-if "$plugin_dir/bin/confirm.sh" "$label" "$detail" >/dev/null 2>&1; then
+if "$plugin_dir/bin/confirm.sh" "$label" "$detail" always:browser >/dev/null 2>&1; then
   [ -n "$scopeable" ] && printf '%s\n' "$scopeable" >> "$scope_file" 2>/dev/null
   decide allow "The user approved: $label."
 fi

@@ -168,14 +168,18 @@ commands. Know the boundaries:
     yes approves that one action and grants nothing for next time.
   - Upgrading from an older install rewrites the live policy once, retiring
     the broad rules it used to seed and adding the wrappers in their place.
-  - **Auto mode** turns tier 1 off wholesale: every shell command runs with
-    no card. Reach it from the "Always allow" choice on a shell card, or the
-    switch in Settings, and take it back the same way — the switch is the
-    undo for having pressed the button. Only a human can throw it: it is
-    written by `bin/auto-mode.sh`, which is deliberately *not* pre-approved,
-    and `auto_mode` is deliberately not a key `config-set.sh` will write, so
-    the agent has no pre-approved path to granting itself auto mode. It
-    changes nothing about the browser gate, tier 2 or tier 3.
+  - **Auto mode** turns a gate off wholesale, and there are two of them —
+    one for the shell, one for the browser — because they are two different
+    risks and saying yes to one is not saying yes to the other. Reach either
+    from the "Always allow" choice on that gate's own card, or its switch in
+    Settings, and take it back the same way: the switch is the undo for
+    having pressed the button. A card carries the name of the switch it
+    offers, so the browser's button can never turn off the shell's gate.
+    Only a human can throw either: they are written by `bin/auto-mode.sh`,
+    which is deliberately *not* pre-approved, and neither key is one
+    `config-set.sh` will write, so the agent has no pre-approved path to
+    granting itself auto mode. Tier 2 and tier 3 are unchanged, and a
+    `permissions.deny` rule still outranks both.
   - The tiers are enforced, not merely declared. The policy used to be handed
     to the CLI as `--allowedTools` and assumed to be exhaustive. For the Bash
     tool it is not: measured on Claude Code 2.1.251, `--allowedTools Read
@@ -237,6 +241,9 @@ commands. Know the boundaries:
   only, so a long browsing task is one card per site instead of one per click;
   the things you cannot take back stay one card each, every time. A browser
   tool nobody has classified yet is refused, not assumed harmless. If the
+  per-card rhythm is too much for a long browsing task, "Always allow" on a
+  browser card (or the browser switch in Settings) runs the lot without
+  asking until you turn it back off. If the
   gates cannot be installed the turn does not run at all — the shell gate is
   what holds the wrapper policy up, so a turn without them is a turn with an
   unenforced allowlist.

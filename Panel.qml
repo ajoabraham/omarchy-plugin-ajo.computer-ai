@@ -61,6 +61,7 @@ Panel {
   readonly property bool toneEnabled: svc ? svc.toneEnabled : true
   readonly property bool voiceApproval: svc ? svc.voiceApproval : true
   readonly property bool autoMode: svc ? svc.autoMode : false
+  readonly property bool autoModeBrowser: svc ? svc.autoModeBrowser : false
   // Whether the card on screen is one that can be answered "always".
   readonly property bool confirmOffersAlways: pendingConfirm !== null
     && String(pendingConfirm.always || "") !== ""
@@ -216,7 +217,7 @@ Panel {
   function resolveGrant(allowIt) { if (svc) svc.resolveGrant(allowIt) }
   function resolveConfirm(allowIt) { if (svc) svc.resolveConfirm(allowIt) }
   function resolveConfirmAlways() { if (svc) svc.resolveConfirmAlways() }
-  function toggleAutoMode() { if (svc) svc.toggleAutoMode() }
+  function toggleAutoMode(scope) { if (svc) svc.toggleAutoMode(scope) }
   function toggleMicDebug() { if (svc) svc.toggleMicDebug() }
   function playCapture() {
     if (svc) svc.playCapture()
@@ -1880,10 +1881,17 @@ Panel {
             }
 
             SettingSwitch {
-              label: "Auto mode"
+              label: "Auto mode: shell"
               detail: "Run shell commands without asking. Turning this off is how you take “Always allow” back."
               on: root.autoMode
-              onToggled: root.toggleAutoMode()
+              onToggled: root.toggleAutoMode("shell")
+            }
+
+            SettingSwitch {
+              label: "Auto mode: browser"
+              detail: "Click, type and navigate in your logged-in browser without asking."
+              on: root.autoModeBrowser
+              onToggled: root.toggleAutoMode("browser")
             }
           }
         }
