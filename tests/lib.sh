@@ -36,7 +36,7 @@ sandbox() {
 # Stand in for the panel: answer the next card that appears, the way the panel
 # does — by writing the verdict file confirm.sh is polling for. Three seconds
 # is generous; a card reaches the queue file before the poll loop starts.
-answer_next() { # $1 = allow|deny
+answer_next() { # $1 = allow|deny — sets answer_pid for the caller to reap
   ( for _ in $(seq 1 60); do
       id=$(jq -r 'select(.kind == "confirm") | .id' "$state/pending-confirms.jsonl" 2>/dev/null | tail -1)
       if [ -n "$id" ] && [ "$id" != "null" ]; then
@@ -44,6 +44,7 @@ answer_next() { # $1 = allow|deny
       fi
       sleep 0.05
     done ) >/dev/null 2>&1 &
+  answer_pid=$!
 }
 # The redirect matters as much as the loop: this runs inside the command
 # substitution that captures a gate's decision, and a background child holding
@@ -56,9 +57,16 @@ answer_next() { # $1 = allow|deny
 # is a slower and different assertion worth making deliberately.
 hook_decision() { # $1 = gate script, $2 = tool name, $3 = tool_input JSON
   local out
+  answer_pid=""
   [ "${card_answer:-deny}" = none ] || answer_next "${card_answer:-deny}"
   out=$(jq -cn --arg t "$2" --argjson i "$3" \
           '{hook_event_name: "PreToolUse", tool_name: $t, tool_input: $i}' | "$1")
+  # A call that raised no card leaves its watcher polling for three seconds,
+  # and that watcher will happily answer the NEXT call's card with the verdict
+  # this one wanted. Reap it here: a stale "deny" from a silent read is
+  # exactly how an approval test starts failing, intermittently, for reasons
+  # that have nothing to do with the gate.
+  [ -n "$answer_pid" ] && { kill "$answer_pid" 2>/dev/null; wait "$answer_pid" 2>/dev/null; }
   [ -n "$out" ] || { echo "(silent)"; return; }
   printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // "(unparsable)"'
 }
