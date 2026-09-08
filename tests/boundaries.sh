@@ -120,6 +120,28 @@ else
   printf '  --   decisions: skipped (node not installed)\n'
 fi
 
+echo "calibration follows the microphone, not the machine:"
+if command -v wpctl >/dev/null 2>&1 && command -v ffmpeg >/dev/null 2>&1; then
+  cal="$work/cal"; mkdir -p "$cal/.config/omarchy"
+  echo '{"mic_threshold_db":-38}' > "$cal/.config/omarchy/computer.json"
+  HOME="$cal" bash "$repo/bin/mic-calibrate.sh" set-threshold -45 >/dev/null 2>&1
+  calcfg="$cal/.config/omarchy/computer.json"
+  if jq -e '(.mic_thresholds | length) == 1' "$calcfg" >/dev/null 2>&1; then
+    note "mic: the threshold is stored under the source that was measured"
+  else
+    lose "mic: the threshold did not land under a source key"
+  fi
+  # The old global value is the fallback for devices never calibrated, so
+  # writing one device's threshold must not overwrite it.
+  if jq -e '.mic_threshold_db == -38' "$calcfg" >/dev/null 2>&1; then
+    note "mic: the global fallback is left alone"
+  else
+    lose "mic: writing one device's threshold clobbered the global fallback"
+  fi
+else
+  printf '  --   mic: skipped (wpctl or ffmpeg not installed)\n'
+fi
+
 echo "the config cannot name something else to run:"
 # `agent` is read from computer.json and turned into agents/<name>.sh. The
 # wrapper above refuses to write a bad one; this is the other half, for a

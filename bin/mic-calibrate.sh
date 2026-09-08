@@ -63,6 +63,34 @@ have wpctl || die "wpctl (pipewire) not found"
 have ffmpeg || die "ffmpeg not found"
 
 cfg_num() { jq -r --arg k "$1" '.[$k] // empty' "$cfg" 2>/dev/null; }
+
+# Calibration belongs to a microphone, not to a machine. Gain already does —
+# PipeWire keeps a volume per node, which is why switching the default input
+# silently un-calibrates the assistant: the new device arrives at whatever
+# volume it happened to have. The threshold has to follow the same rule, or
+# it describes a device that is no longer plugged in.
+src_key() { wpctl inspect "$src" 2>/dev/null | sed -n 's/.*node\.name = "\(.*\)"/\1/p' | head -1; }
+
+# This source's threshold, else the old global one, else the panel's default.
+threshold_now() {
+  jq -r --arg s "$(src_key)" \
+    '(.mic_thresholds[$s] // .mic_threshold_db // -50) | tostring' "$cfg" 2>/dev/null || echo -50
+}
+
+set_threshold_cfg() { # $1 = dBFS
+  local key tmp
+  key=$(src_key)
+  mkdir -p "$(dirname "$cfg")"
+  [ -f "$cfg" ] || printf '{}\n' > "$cfg"
+  tmp=$(mktemp "$(dirname "$cfg")/.computer.XXXXXX") || return 1
+  # No source name (wpctl could not say): fall back to the global key rather
+  # than inventing one, so the value still takes effect.
+  if [ -n "$key" ]; then
+    jq --arg s "$key" --argjson v "$1" '.mic_thresholds[$s] = $v' "$cfg" > "$tmp"
+  else
+    jq --argjson v "$1" '.mic_threshold_db = $v' "$cfg" > "$tmp"
+  fi && mv -f "$tmp" "$cfg" || { rm -f "$tmp"; return 1; }
+}
 gain_now() { wpctl get-volume "$src" 2>/dev/null | awk '{print $2}'; }
 dev_now()  { wpctl inspect "$src" 2>/dev/null | sed -n 's/.*node.description = "\(.*\)"/\1/p' | head -1; }
 
@@ -88,10 +116,10 @@ cmd="${1:-status}"
 case "$cmd" in
   status)
     mic_view on
-    thr=$(cfg_num mic_threshold_db); sil=$(cfg_num mic_end_silence_ms)
+    sil=$(cfg_num mic_end_silence_ms)
     echo "device:    $(dev_now)"
-    echo "gain:      $(gain_now)   (0.0-3.0; 1.0 = 100%)"
-    echo "threshold: ${thr:--50 (default)} dBFS   silence-window: ${sil:-2200 (default)} ms"
+    echo "gain:      $(gain_now)   (0.0-3.0; 1.0 = 100%)   — per device, kept by PipeWire"
+    echo "threshold: $(threshold_now) dBFS (this device)   silence-window: ${sil:-2200 (default)} ms"
     ;;
 
   analyze|auto)
@@ -172,8 +200,8 @@ case "$cmd" in
   set-threshold)
     v="${2:-}"; [ -n "$v" ] || die "usage: set-threshold <dBFS, e.g. -50>"
     v=$(awk -v x="$v" 'BEGIN{ if(x>-20)x=-20; if(x<-70)x=-70; printf "%d", x}')
-    "$script_dir/config-set.sh" mic_threshold_db "$v"
-    echo "threshold -> ${v} dBFS (applies from your next turn)"
+    set_threshold_cfg "$v" || die "could not write the threshold"
+    echo "threshold -> ${v} dBFS for $(dev_now) (applies from your next turn)"
     ;;
 
   set-silence)

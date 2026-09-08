@@ -859,7 +859,15 @@ Item {
       // false as well as null, so a setting the user turned OFF read back as
       // "unset" and silently returned to its default on the next reload.
       // tostring keeps false as "false" and absence as "null".
-      "jq -r '[(.mic_threshold_db // \"\"), (.mic_end_silence_ms // \"\"), " +
+      // The threshold is a property of the microphone, so it is looked up by
+      // the source that is default at this moment — switching inputs between
+      // turns picks up that input's own calibration, and an uncalibrated one
+      // falls back to the old global value.
+      "src=$(wpctl inspect @DEFAULT_AUDIO_SOURCE@ 2>/dev/null | " +
+      "sed -n 's/.*node\\.name = \"\\(.*\\)\"/\\1/p' | head -1); " +
+      "jq -r --arg s \"$src\" " +
+      "'[((.mic_thresholds[$s] // .mic_threshold_db // \"\")|tostring), " +
+      "(.mic_end_silence_ms // \"\"), " +
       "(.tone_enabled|tostring), (.voice_approval|tostring), (.auto_mode|tostring)] | @tsv' " +
       "\"$HOME/.config/omarchy/computer.json\" 2>/dev/null"]
     stdout: StdioCollector {

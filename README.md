@@ -71,6 +71,14 @@ media) within a user-approved permission policy.
   capture back to you so you can hear what it heard, and puts the view away
   when it is done. Threshold and silence-window changes take effect on your
   next sentence, without restarting the shell or closing the panel.
+  Calibration belongs to the microphone, not to the machine: gain is already
+  per-device (PipeWire keeps a volume per node) and the endpointing threshold
+  is stored the same way, under `mic_thresholds` keyed by the source's
+  `node.name`. So switching your default input picks up that input's own
+  calibration on the next turn instead of applying the last one's numbers to
+  it — which reads, unmistakably, as the assistant cutting you off
+  mid-sentence. A device you have never calibrated falls back to the old
+  global `mic_threshold_db`.
 - **Agents**: one adapter script per harness in `agents/` (Claude Code, Grok
   CLI, ChatGPT via Codex CLI ship in-tree). The panel's Assistant dropdown
   discovers them automatically; see `agents/README.md` for the contract.
