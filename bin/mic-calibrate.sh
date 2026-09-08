@@ -22,7 +22,7 @@
 #   done                      close the panel's mic check view
 #   analyze [pcm] [secs]      measure the last turn's audio (default) or a
 #                             fresh N-second capture; print stats + advice
-#   set-gain <0.0..3.0>       set mic input gain
+#   set-gain <0.0..3.0>       cubic, so dB = 60*log10(v): 1.0 = 0 dB       set mic input gain
 #   set-threshold <dBFS>      voice-activity threshold (clamped -70..-20)
 #   set-silence <ms>          end-of-speech silence window (clamped 800..5000)
 #   auto                      measure last turn's audio and pick a gain
@@ -92,6 +92,17 @@ set_threshold_cfg() { # $1 = dBFS
   fi && mv -f "$tmp" "$cfg" || { rm -f "$tmp"; return 1; }
 }
 gain_now() { wpctl get-volume "$src" 2>/dev/null | awk '{print $2}'; }
+
+# The number wpctl takes is NOT a linear gain, and reading it as one is an
+# expensive mistake: PipeWire volume is cubic, so dB = 60*log10(v). 0.16 is
+# -47.7 dB and 1.8 is +15.3 dB — a step that looks like "about ten times
+# louder" is sixty-three decibels, which buries speech in clipping. Every
+# place this prints a gain prints the decibels with it, because the
+# assistant calibrates by voice using this same tool and reads its output
+# the way a person would.
+gain_db() { # $1 = wpctl volume -> signed dB
+  awk -v v="$1" 'BEGIN{ if (v+0 <= 0) { print "-inf dB"; exit } printf "%+.1f dB", 60*log(v)/log(10) }'
+}
 dev_now()  { wpctl inspect "$src" 2>/dev/null | sed -n 's/.*node.description = "\(.*\)"/\1/p' | head -1; }
 
 # RMS-per-50ms distribution of a raw PCM file — the endpointer's own view.
@@ -128,7 +139,8 @@ case "$cmd" in
     mic_view on
     sil=$(cfg_num mic_end_silence_ms)
     echo "device:    $(dev_now)"
-    echo "gain:      $(gain_now)   (0.0-3.0; 1.0 = 100%)   — per device, kept by PipeWire"
+    g=$(gain_now)
+    echo "gain:      $g ($(gain_db "$g"))   (0.0-3.0 cubic, 1.0 = 0 dB)   — per device, kept by PipeWire"
     echo "threshold: $(threshold_now) dBFS (this device)   silence-window: ${sil:-2200 (default)} ms"
     ;;
 
@@ -159,7 +171,7 @@ case "$cmd" in
     read -r frames p10 med p90 max peak < <(stats "$pcm")
     [ "$frames" -gt 0 ] 2>/dev/null || die "capture was empty"
     gain=$(gain_now)
-    echo "source:    $srclabel  ($frames frames, gain $gain)"
+    echo "source:    $srclabel  ($frames frames, gain $gain / $(gain_db "$gain"))"
     echo "speech:    median ${med}  loud(p90) ${p90}  peak ${peak} dBFS"
 
     # Judge against the same scale the endpointer uses. Peaks near 0 clip
@@ -179,7 +191,10 @@ case "$cmd" in
       verdict="GOOD — loud speech is well above the threshold with peak headroom."
     fi
     echo "verdict:   $verdict"
-    [ -n "$suggest" ] && echo "suggest:   mic-calibrate.sh $suggest   (then ask the user to speak again to re-check)"
+    if [ -n "$suggest" ]; then
+      newdb=$(gain_db "${suggest#set-gain }")
+      echo "suggest:   mic-calibrate.sh $suggest  -> $newdb   (then ask the user to speak again to re-check)"
+    fi
     if [ "$cmd" = auto ] && [ -n "$suggest" ]; then
       newg="${suggest#set-gain }"
       wpctl set-volume "$src" "$newg" && echo "applied:   gain -> $(gain_now)"
@@ -204,7 +219,7 @@ case "$cmd" in
     v="${2:-}"; [ -n "$v" ] || die "usage: set-gain <0.0..3.0>"
     v=$(awk -v x="$v" 'BEGIN{ if(x<0)x=0; if(x>3)x=3; printf "%.2f", x}')
     wpctl set-volume "$src" "$v" || die "wpctl failed"
-    echo "gain -> $(gain_now)"
+    echo "gain -> $(gain_now) ($(gain_db "$(gain_now)")) for $(dev_now)"
     ;;
 
   set-threshold)
