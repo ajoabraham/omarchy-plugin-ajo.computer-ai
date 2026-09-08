@@ -337,6 +337,13 @@ Item {
   property real noSpeechTimeoutMs: 10000
   property bool heardSpeech: false
   property real silenceMs: 0
+  // Set the moment a capture has been told to stop. Without it the endpoint
+  // condition stays true on every frame that arrives while ffmpeg is still
+  // dying, so the panel signals it again — and again. ffmpeg answers "Received
+  // > 3 system signals, hard exiting" and abandons the file instead of writing
+  // its trailer, which loses the tail of the recording: the last thing the
+  // user said.
+  property bool endpointed: false
   property int loudStreak: 0
   property real listenedMs: 0
 
@@ -665,6 +672,7 @@ Item {
     micPeakDb = -90
     heardSpeech = false
     silenceMs = 0
+    endpointed = false
     loudStreak = 0
     listenedMs = 0
     refreshMic()
@@ -704,6 +712,7 @@ Item {
     micPeakDb = -90
     heardSpeech = false
     silenceMs = 0
+    endpointed = false
     loudStreak = 0
     listenedMs = 0
     refreshMic()
@@ -716,6 +725,10 @@ Item {
 
   function stopListening() {
     // SIGTERM makes ffmpeg finalize the WAV; the pipeline continues onExited.
+    // The flag stops the level handler asking again on every frame that
+    // arrives while ffmpeg finalizes; a person pressing Enter twice still
+    // gets a second signal, which is what you want when something is stuck.
+    endpointed = true
     if (recProc.running) recProc.running = false
   }
 
@@ -1050,6 +1063,7 @@ Item {
           if (root.micDb > root.micPeakDb) root.micPeakDb = root.micDb
         }
         if (root.listenedMs < 600) return   // stream warm-up: clicks, pops
+        if (root.endpointed) return         // already stopping; let it finish
         if (root.micDb > root.speechThresholdDb) {
           root.loudStreak += 1
           if (root.loudStreak >= 3) root.heardSpeech = true
