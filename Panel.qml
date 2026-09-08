@@ -60,6 +60,7 @@ Panel {
   readonly property bool typing: svc ? svc.typing : false
   readonly property bool toneEnabled: svc ? svc.toneEnabled : true
   readonly property bool voiceApproval: svc ? svc.voiceApproval : true
+  readonly property bool autoMode: svc ? svc.autoMode : false
 
   readonly property var voiceOptions: svc ? svc.voiceOptions : []
   readonly property var agentOptions: svc ? svc.agentOptions : []
@@ -211,6 +212,8 @@ Panel {
   function stopAll() { if (svc) svc.stopAll() }
   function resolveGrant(allowIt) { if (svc) svc.resolveGrant(allowIt) }
   function resolveConfirm(allowIt) { if (svc) svc.resolveConfirm(allowIt) }
+  function resolveConfirmAlways() { if (svc) svc.resolveConfirmAlways() }
+  function toggleAutoMode() { if (svc) svc.toggleAutoMode() }
   function toggleMicDebug() { if (svc) svc.toggleMicDebug() }
   function playCapture() {
     if (svc) svc.playCapture()
@@ -496,6 +499,10 @@ Panel {
     property string footnote: ""
     property string acceptLabel: ""
     property string refuseLabel: ""
+    // A third choice, for the gates that can be switched off wholesale.
+    // Empty on the cards that cannot — approving `system reboot` is never a
+    // standing answer.
+    property string alwaysLabel: ""
     // Shown beside the keys when answering out loud is available, so the
     // card itself teaches the words rather than leaving them in the README.
     property string spokenHint: ""
@@ -504,6 +511,7 @@ Panel {
 
     signal accepted()
     signal refused()
+    signal always()
 
     Layout.fillWidth: true
     opacity: visible ? 1 : 0
@@ -613,6 +621,19 @@ Panel {
 
           Text {
             visible: text !== ""
+            text: gate.alwaysLabel
+            color: Qt.alpha(gate.accentColor, 0.75)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: gate.always()
+            }
+          }
+
+          Text {
+            visible: text !== ""
             text: gate.spokenHint
             color: Qt.alpha(Color.popups.text, 0.42)
             font.family: Style.font.family
@@ -673,6 +694,10 @@ Panel {
         if (root.pendingConfirm !== null) {
           if (event.key === Qt.Key_Y) { root.resolveConfirm(true); event.accepted = true }
           else if (event.key === Qt.Key_N) { root.resolveConfirm(false); event.accepted = true }
+          else if (event.key === Qt.Key_A && (event.modifiers & Qt.ShiftModifier)
+                   && root.pendingConfirm.always) {
+            root.resolveConfirmAlways(); event.accepted = true
+          }
           return
         }
         if (root.pendingGrant === null) return
@@ -1424,10 +1449,13 @@ Panel {
           footnote: "This one time only — it is not remembered."
           acceptLabel: "[Y] Do it"
           refuseLabel: "[N] No"
+          alwaysLabel: root.pendingConfirm && root.pendingConfirm.always
+            ? "[Shift+A] Always allow" : ""
           spokenHint: root.voiceApproval ? "or say “allow” / “deny”" : ""
           progress: root.confirmProgress
           onAccepted: root.resolveConfirm(true)
           onRefused: root.resolveConfirm(false)
+          onAlways: root.resolveConfirmAlways()
         }
 
         // The human gate for privilege escalation. Unlike the card above,
@@ -1845,6 +1873,13 @@ Panel {
               detail: "Say “allow” or “deny” instead of pressing a key"
               on: root.voiceApproval
               onToggled: root.toggleVoiceApproval()
+            }
+
+            SettingSwitch {
+              label: "Auto mode"
+              detail: "Run shell commands without asking. Turning this off is how you take “Always allow” back."
+              on: root.autoMode
+              onToggled: root.toggleAutoMode()
             }
           }
         }

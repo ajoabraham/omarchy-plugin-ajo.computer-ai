@@ -160,6 +160,14 @@ commands. Know the boundaries:
     yes approves that one action and grants nothing for next time.
   - Upgrading from an older install rewrites the live policy once, retiring
     the broad rules it used to seed and adding the wrappers in their place.
+  - **Auto mode** turns tier 1 off wholesale: every shell command runs with
+    no card. Reach it from the "Always allow" choice on a shell card, or the
+    switch in Settings, and take it back the same way — the switch is the
+    undo for having pressed the button. Only a human can throw it: it is
+    written by `bin/auto-mode.sh`, which is deliberately *not* pre-approved,
+    and `auto_mode` is deliberately not a key `config-set.sh` will write, so
+    the agent has no pre-approved path to granting itself auto mode. It
+    changes nothing about the browser gate, tier 2 or tier 3.
   - The tiers are enforced, not merely declared. The policy used to be handed
     to the CLI as `--allowedTools` and assumed to be exhaustive; it is not.
     Measured on Claude Code 2.1.251, `--allowedTools Read --permission-mode

@@ -30,6 +30,12 @@ id="$$-$(date +%s%N)"
 verdict_file="$state/confirm-$id"
 pending="$state/pending-confirms.jsonl"
 
+# Some gates can be switched off wholesale, and for those the card carries a
+# third choice. The caller says so, because "always" means something the
+# caller has to implement and `system reboot` has no such thing.
+offer_always=0
+[ "${3:-}" = "always" ] && offer_always=1
+
 timeout_s="${COMPUTER_CONFIRM_TIMEOUT:-120}"
 case "$timeout_s" in ''|*[!0-9]*) timeout_s=120 ;; esac
 
@@ -38,8 +44,8 @@ emit() { # $1 = kind, $2 = "queue" to also record it as outstanding
   # The deadline travels with the question: a card that quietly expires reads
   # as a bug, so the panel is told how long it has and can show it draining.
   line=$(jq -cn --arg k "$1" --arg id "$id" --arg l "$label" --arg d "$detail" \
-    --argjson t "$timeout_s" \
-    '{kind: $k, id: $id, label: $l, detail: $d, timeout: $t}') || return 0
+    --argjson t "$timeout_s" --argjson a "$offer_always" \
+    '{kind: $k, id: $id, label: $l, detail: $d, timeout: $t, always: ($a == 1)}') || return 0
   [ -n "${COMPUTER_ACTIVITY_FILE:-}" ] &&
     printf '%s\n' "$line" >> "$COMPUTER_ACTIVITY_FILE" 2>/dev/null
   # The queue file holds what is OUTSTANDING — the resolution notice belongs

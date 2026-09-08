@@ -199,6 +199,12 @@ Item {
   // is already going). Toggle in Settings; persisted as tone_enabled.
   property bool toneEnabled: true
 
+  // Auto mode: every shell command the agent asks for runs, with no card.
+  // Held here only for display and for the Settings switch — bin/bash-gate.sh
+  // reads the config itself on every command, so turning this off takes
+  // effect on the next one rather than on the next turn.
+  property bool autoMode: false
+
   // --- what the agent is doing right now ---
 
   // Adapters that can watch their harness append a line per step to
@@ -837,7 +843,7 @@ Item {
     id: micProc
     command: ["bash", "-c",
       "jq -r '[(.mic_threshold_db // \"\"), (.mic_end_silence_ms // \"\"), (.tone_enabled // \"\"), " +
-      "(.voice_approval // \"\")] | @tsv' " +
+      "(.voice_approval // \"\"), (.auto_mode // \"\")] | @tsv' " +
       "\"$HOME/.config/omarchy/computer.json\" 2>/dev/null"]
     stdout: StdioCollector {
       waitForEnd: true
@@ -851,6 +857,8 @@ Item {
         if (te !== "") root.toneEnabled = (te !== "false")
         var va = String(parts[3] || "").trim()
         if (va !== "") root.voiceApproval = (va !== "false")
+        var am = String(parts[4] || "").trim()
+        root.autoMode = (am === "true")
       }
     }
   }
@@ -970,7 +978,10 @@ Item {
         id: id,
         label: clamp(ev.label, 80),
         detail: clamp(ev.detail, maxActivityFieldChars),
-        timeout: window
+        timeout: window,
+        // Only the gates that can be switched off wholesale offer it, and
+        // the script that asked the question is the one that decides.
+        always: ev.always === true
       }
       confirmDeadlineMs = window > 0 ? Date.now() + window * 1000 : 0
       confirmProgress = window > 0 ? 1 : -1
@@ -1258,6 +1269,28 @@ Item {
     setConfigProc.command = [binDir + "/config-set.sh", "voice_approval",
                              voiceApproval ? "true" : "false"]
     setConfigProc.running = true
+  }
+
+  // "Always allow" is the card's version of the Settings switch: it answers
+  // this question yes and leaves the gate open for the rest. Written through
+  // auto-mode.sh rather than config-set.sh, because config-set.sh is
+  // pre-approved and this setting must never be one the agent can reach.
+  function resolveConfirmAlways() {
+    if (pendingConfirm === null) return
+    autoMode = true
+    autoModeProc.command = [binDir + "/auto-mode.sh", "set", "on"]
+    autoModeProc.running = true
+    resolveConfirm(true)
+  }
+
+  function toggleAutoMode() {
+    autoMode = !autoMode
+    autoModeProc.command = [binDir + "/auto-mode.sh", "set", autoMode ? "on" : "off"]
+    autoModeProc.running = true
+  }
+
+  Process {
+    id: autoModeProc
   }
 
   function toggleTone() {

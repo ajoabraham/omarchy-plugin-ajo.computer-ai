@@ -37,6 +37,13 @@ silent() { exit 0; }
 
 input=$(head -c 1000000)
 [ "$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null)" = "Bash" ] || silent
+
+# Auto mode: the user has said yes to all of this, until they say otherwise.
+# Read from the config every time rather than cached anywhere, so turning it
+# off in Settings takes effect on the very next command.
+if [ "$("$plugin_dir/bin/auto-mode.sh" get 2>/dev/null)" = "on" ]; then
+  decide allow "Auto mode is on — the user approved every command until they turn it off in Settings."
+fi
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
 [ -n "$cmd" ] || decide deny "There was no command to run."
 
@@ -149,7 +156,7 @@ if reads_only_ours; then
 fi
 
 detail=$(printf '%s' "$cmd" | head -c 200)
-if "$plugin_dir/bin/confirm.sh" "run a command" "$detail" >/dev/null 2>&1; then
+if "$plugin_dir/bin/confirm.sh" "run a command" "$detail" always >/dev/null 2>&1; then
   decide allow "The user approved this command, once."
 fi
 decide deny "The user declined to run that command. Do not retry it or try another way to run the same thing; say so and move on."
