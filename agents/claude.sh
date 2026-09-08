@@ -112,8 +112,8 @@ note() {  # kind, detail — an activity line from the adapter itself
     >> "$COMPUTER_ACTIVITY_FILE" 2>/dev/null || true
 }
 
-# The browser gate travels with the turn, as a Claude Code PreToolUse hook
-# pointed at bin/chrome-gate.sh. It is rendered fresh each turn rather than
+# The gates travel with the turn, as Claude Code PreToolUse hooks pointed at
+# bin/bash-gate.sh and bin/chrome-gate.sh. It is rendered fresh each turn rather than
 # installed once, because the path in it has to match the plugin directory
 # this adapter is actually running from — a stale copy left behind by a moved
 # or renamed plugin would be a gate that silently is not there.
@@ -126,18 +126,20 @@ plugin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 state_dir="${COMPUTER_STATE_DIR:-$HOME/.local/share/computer-ai/state}"
 hooks_file="$state_dir/claude-hooks.json"
 
-# No gate, no browser. Losing the ability to drive Chrome is a bad turn;
-# driving it without the card is a bad machine.
-chrome_flags=()
-if mkdir -p "$state_dir" 2>/dev/null &&
-   sed "s|__PLUGIN_DIR__|$plugin_dir|g" "$plugin_dir/defaults/chrome-hooks.json" \
-     > "$hooks_file" 2>/dev/null && [ -s "$hooks_file" ] &&
-   [ -x "$plugin_dir/bin/chrome-gate.sh" ]; then
-  chmod 600 "$hooks_file" 2>/dev/null || true
-  chrome_flags=(--chrome --settings "$hooks_file")
-else
-  note meta "browser tools are off for this turn — the confirmation gate could not be installed"
+# No gate, no turn. This is not the browser's own switch any more: the Bash
+# gate is what holds the wrapper policy up, so a turn that runs without these
+# hooks is a turn with an unenforced allowlist. Refusing to answer is a bad
+# minute; answering with the boundary switched off is a bad machine.
+if ! { mkdir -p "$state_dir" 2>/dev/null &&
+       sed "s|__PLUGIN_DIR__|$plugin_dir|g" "$plugin_dir/defaults/hooks.json" \
+         > "$hooks_file" 2>/dev/null && [ -s "$hooks_file" ] &&
+       [ -x "$plugin_dir/bin/bash-gate.sh" ] &&
+       [ -x "$plugin_dir/bin/chrome-gate.sh" ]; }; then
+  note error "the permission gate could not be installed — the turn was not run"
+  echo "I can't answer that one: my permission gate wouldn't install, and I don't run without it. Check that the plugin directory is intact."
+  exit 0
 fi
+chmod 600 "$hooks_file" 2>/dev/null || true
 
 # Runs one claude invocation, streaming activity as it goes. Success is
 # defined by the result event carrying an answer, not by the exit code —
@@ -157,7 +159,7 @@ run_turn() {
     esac
   done < <(claude "$@" --output-format stream-json --verbose \
     --append-system-prompt "$COMPUTER_INSTRUCTIONS" \
-    "${chrome_flags[@]+"${chrome_flags[@]}"}" --allowedTools "${allow[@]}" \
+    --chrome --settings "$hooks_file" --allowedTools "${allow[@]}" \
     "${add_flags[@]+"${add_flags[@]}"}" "${model_flags[@]+"${model_flags[@]}"}" \
     2>/dev/null | jq -r --unbuffered --argjson maxr "$max_answer_chars" \
                     "$stream_filter" 2>/dev/null)

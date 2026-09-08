@@ -2,7 +2,7 @@
   "_comment": [
     "Plugin-owned Claude Code settings, rendered into the private state",
     "directory each turn and passed to `claude --settings`. It carries one",
-    "thing: the tier-3 gate on the browser tools.",
+    "two things: the gate on the Bash tool, and the gate on the browser.",
     "",
     "This is not the user's permission policy — that is claude-settings.json,",
     "which the user edits through the panel's grant cards. Nothing here is",
@@ -14,6 +14,16 @@
   ],
   "hooks": {
     "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__PLUGIN_DIR__/bin/bash-gate.sh",
+            "timeout": 180
+          }
+        ]
+      },
       {
         "matcher": "mcp__claude-in-chrome__.*",
         "hooks": [

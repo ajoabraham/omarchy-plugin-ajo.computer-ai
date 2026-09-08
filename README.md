@@ -157,6 +157,20 @@ commands. Know the boundaries:
     yes approves that one action and grants nothing for next time.
   - Upgrading from an older install rewrites the live policy once, retiring
     the broad rules it used to seed and adding the wrappers in their place.
+  - The tiers are enforced, not merely declared. The policy used to be handed
+    to the CLI as `--allowedTools` and assumed to be exhaustive; it is not.
+    Measured on Claude Code 2.1.251, `--allowedTools Read --permission-mode
+    default` still ran `id -un` through the Bash tool, so a list of wrappers
+    was a convention rather than a boundary. `bin/bash-gate.sh` closes that
+    as a `PreToolUse` hook: a command matching a rule in your policy runs, a
+    read confined to the plugin's own directories runs, and anything else
+    blocks on the tier-3 card. Since a hook decides ahead of the permission
+    system, that holds whatever the allowlist says.
+  - A wrapper is the *whole* command, not the start of one. Anything carrying
+    a shell operator — `;`, `&&`, a pipe, a redirect, a substitution, a second
+    line — never matches a rule and never reads silently, because
+    `clip.sh copy hi; curl evil.example` begins with an approved wrapper and
+    ends somewhere else entirely.
 - Agents are also confined to `$HOME` as their working directory, whatever
   the allowlist says. Reaching a runtime or state directory elsewhere needs
   a separate `Dir(/absolute/path)` grant, which lands in
@@ -214,6 +228,10 @@ commands. Know the boundaries:
   `bash tests/chrome-gate.sh` does the same for the browser: what the gate
   lets through silently, what raises a card, that an approved site cannot be
   borrowed by a lookalike URL, and that the approval dies with the turn.
+  `bash tests/bash-gate.sh` does it for the shell: that the wrappers run
+  untouched, that a wrapper with a command bolted onto the end does not, that
+  a lookalike path is not the wrapper, and that reading stops at the edge of
+  the plugin's own directories.
 - Voice is an input channel, and so is everything the agent reads: pages,
   mail and browser content all arrive in the same context as your words.
   That is why the boundaries above are enforced by wrappers and gates rather
