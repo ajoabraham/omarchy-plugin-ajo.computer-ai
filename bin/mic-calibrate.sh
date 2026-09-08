@@ -99,15 +99,25 @@ dev_now()  { wpctl inspect "$src" 2>/dev/null | sed -n 's/.*node.description = "
 stats() {
   local pcm="$1"
   [ -s "$pcm" ] || { echo "0 - - - - -"; return; }
-  local rms peak
+  local rms peak trim=""
+  # Skip the first 600ms: that is the capture stream starting, not the room.
+  # PipeWire settles with a burst of full-scale samples — measured here as
+  # 234ms of them at the head of a 9s turn — which pins volumedetect at
+  # 0 dBFS and makes every capture look like it is clipping, whatever the
+  # gain is. Chasing that verdict walks the gain down until speech is
+  # inaudible. The panel already ignores this window for its own levels, so
+  # measure the audio it measures, or the verdict describes the driver
+  # rather than the speaker. Short captures are left alone: better a
+  # startled reading than none.
+  [ "$(stat -c%s "$pcm" 2>/dev/null || echo 0)" -gt 32000 ] && trim="atrim=start=0.6,"
   rms=$(ffmpeg -hide_banner -nostats -loglevel error -f s16le -ar 16000 -ac 1 -i "$pcm" \
-    -af "asetnsamples=800,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-" \
+    -af "${trim}asetnsamples=800,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-" \
     -f null - 2>/dev/null \
     | awk -F= '/RMS_level/{v=$2; if(v=="-inf")v=-90; print v}' \
     | sort -n \
     | awk '{a[NR]=$1} END{ if(!NR){print "0 - - - -"; exit}
         printf "%d %.1f %.1f %.1f %.1f", NR, a[int(NR*0.1)+1], a[int(NR*0.5)+1], a[int(NR*0.9)+1], a[NR] }')
-  peak=$(ffmpeg -hide_banner -f s16le -ar 16000 -ac 1 -i "$pcm" -af volumedetect -f null - 2>&1 \
+  peak=$(ffmpeg -hide_banner -f s16le -ar 16000 -ac 1 -i "$pcm" -af "${trim}volumedetect" -f null - 2>&1 \
     | sed -n 's/.*max_volume: \(-*[0-9.]*\) dB/\1/p' | head -1)
   echo "$rms ${peak:--}"
 }
