@@ -28,6 +28,14 @@ fi
 
 mapfile -t allow < <(jq -r '.permissions.allow[]' "$COMPUTER_SETTINGS_FILE" 2>/dev/null)
 
+# "Never this" travels as --disallowedTools, which does deny what it names
+# (measured on 2.1.251, unlike --allowedTools). bin/bash-gate.sh enforces the
+# same list for shell commands, so a deny holds whether or not the CLI
+# understands the particular rule shape.
+mapfile -t deny < <(jq -r '.permissions.deny[]?' "$COMPUTER_SETTINGS_FILE" 2>/dev/null)
+deny_flags=()
+[ "${#deny[@]}" -gt 0 ] && deny_flags=(--disallowedTools "${deny[@]}")
+
 # Working directories beyond $HOME. The agent is confined to its working
 # directories no matter what allowedTools says, so reading anything under
 # /run, /var or another user-approved root needs an explicit --add-dir.
@@ -161,6 +169,7 @@ run_turn() {
   done < <(claude "$@" --output-format stream-json --verbose \
     --append-system-prompt "$COMPUTER_INSTRUCTIONS" \
     --chrome --settings "$hooks_file" --allowedTools "${allow[@]}" \
+    "${deny_flags[@]+"${deny_flags[@]}"}" \
     "${add_flags[@]+"${add_flags[@]}"}" "${model_flags[@]+"${model_flags[@]}"}" \
     2>/dev/null | jq -r --unbuffered --argjson maxr "$max_answer_chars" \
                     "$stream_filter" 2>/dev/null)

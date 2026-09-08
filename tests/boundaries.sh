@@ -67,6 +67,11 @@ check "sysinfo: option as unit name"     2 "$repo/bin/sysinfo.sh" unit '-Mfoo'
 check "sysinfo: option as package name"  2 "$repo/bin/sysinfo.sh" package '-Qo/bin/sh'
 check "sysinfo: path in package name"    2 "$repo/bin/sysinfo.sh" package '../../etc/passwd'
 check "notify: empty headline"           2 "$repo/bin/notify.sh" ""
+# A rule bash-gate.sh cannot match is one the user would approve to no
+# effect, so it is refused where the agent can still be told what to ask for.
+check "request-grant: wildcard inside a rule" 2 "$repo/bin/request-grant.sh" 'Bash(git * push)' why
+check "request-grant: bare Bash(*)"      2 "$repo/bin/request-grant.sh" 'Bash(*)' why
+check "request-grant: Bash with no command" 2 "$repo/bin/request-grant.sh" 'Bash' why
 check "config-set: unlisted key"         2 "$repo/bin/config-set.sh" PATH '"/tmp"'
 check "config-set: agent with a path"    2 "$repo/bin/config-set.sh" agent '"../../tmp/evil"'
 check "config-set: agent with a command" 2 "$repo/bin/config-set.sh" agent '"claude; id"'

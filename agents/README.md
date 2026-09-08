@@ -4,6 +4,14 @@ Every `<name>.sh` in this directory is a harness the Computer AI panel can
 use; the Assistant dropdown lists them automatically. Adding an agent is
 just dropping an executable script here.
 
+**An adapter must be able to enforce the policy, or must not act.** The
+allow list is not self-enforcing: both Claude Code and grok were measured
+running a shell command that no rule allowed. So an adapter either has a seam
+where the policy can be checked before a tool runs (`claude.sh` uses
+`PreToolUse` hooks pointed at `bin/bash-gate.sh`), or it closes the acting
+tools outright (`chatgpt.sh` runs Codex read-only; `grok.sh` denies the
+shell). Passing the rules as flags and hoping is what this plugin used to do.
+
 ## Contract
 
 An adapter is called as `<name>.sh "<question>"` with this environment:
@@ -11,7 +19,7 @@ An adapter is called as `<name>.sh "<question>"` with this environment:
 | Variable                 | Meaning                                          |
 |--------------------------|--------------------------------------------------|
 | `COMPUTER_INSTRUCTIONS`  | System-prompt text (persona, powers, memory)     |
-| `COMPUTER_SETTINGS_FILE` | JSON permission policy (`.permissions.allow[]`)  |
+| `COMPUTER_SETTINGS_FILE` | JSON permission policy (`.permissions.allow[]`, `.permissions.deny[]`) |
 | `COMPUTER_CONV_ID`       | Conversation UUID for this panel session         |
 | `COMPUTER_CONV_STARTED`  | `1` if this conversation has previous turns      |
 | `COMPUTER_STATE_DIR`     | Scratch/state directory for adapter bookkeeping  |

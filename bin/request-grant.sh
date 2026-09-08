@@ -33,6 +33,26 @@ case "$rule" in
     exit 2
     ;;
 esac
+# A Bash rule the gate cannot match is a rule that can never work: the user
+# approves it, bin/bash-gate.sh matches nothing, the agent asks again, and the
+# card comes back forever with Allow appearing to do nothing. The gate reads
+# two shapes, so those are the two worth queueing — and saying so here is the
+# only place the agent can be told what to ask for instead.
+case "$rule" in
+  'Bash('*')')
+    probe=${rule#Bash(}; probe=${probe%)}; probe=${probe%:\*}
+    case "$probe" in
+      ''|*'*'*)
+        echo "request-grant: '$rule' can never be enforced. Ask for Bash(<command>:*) — the command as it is actually run, e.g. Bash($HOME/bin/thing.sh:*) — with no wildcard inside it." >&2
+        exit 2 ;;
+    esac
+    ;;
+  Bash*)
+    echo "request-grant: a shell rule must name a command: Bash(<command>:*), not '$rule'." >&2
+    exit 2
+    ;;
+esac
+
 reason=$(printf '%s' "$reason" | tr -d '\n\r' | head -c 300)
 
 # Already granted? A tool rule lives in permissions.allow; a Dir(/path) rule

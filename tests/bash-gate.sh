@@ -106,6 +106,19 @@ COMPUTER_STATE_DIR="$state" "$repo/bin/confirm.sh" "reboot" "now" >/dev/null 2>&
 check "an ordinary tier-3 card offers none" "" \
   "$(jq -r 'select(.kind == "confirm") | .always' "$state/activity.jsonl" | tail -1)"
 
+echo "a deny rule is the one thing auto mode does not override:"
+denied=$(mktemp "$work/policy.XXXXXX")
+jq '.permissions.deny = ["Bash(curl:*)"]' "$COMPUTER_SETTINGS_FILE" > "$denied"
+check "a denied command is refused"      "deny" \
+  "$(COMPUTER_SETTINGS_FILE=$denied card_answer=allow run "curl https://example.com")"
+mkdir -p "$HOME/.config/omarchy"
+echo '{"auto_mode":true}' > "$HOME/.config/omarchy/computer.json"
+check "and still refused in auto mode"   "deny" \
+  "$(COMPUTER_SETTINGS_FILE=$denied run "curl https://example.com")"
+check "while everything else still runs" "allow" \
+  "$(COMPUTER_SETTINGS_FILE=$denied run "wget http://x.example")"
+rm -f "$HOME/.config/omarchy/computer.json"
+
 echo "auto mode runs everything, until it is switched off:"
 mkdir -p "$HOME/.config/omarchy"
 echo '{"auto_mode":true}' > "$HOME/.config/omarchy/computer.json"

@@ -37,17 +37,14 @@ case $tool in
   *) silent ;;   # some other tool, and not this hook's business
 esac
 
-# Auto mode: the user has said yes to all of this, until they say otherwise.
-# Read from the config every time rather than cached anywhere, so turning it
-# off in Settings takes effect on the very next command.
-if [ "$("$plugin_dir/bin/auto-mode.sh" get 2>/dev/null)" = "on" ]; then
-  decide allow "Auto mode is on — the user approved every command until they turn it off in Settings."
-fi
-
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
 [ -n "$cmd" ] || decide deny "There was no command to run."
 
-matches_policy() {
+# Matches $cmd against one of the policy's rule lists. Only the two shapes
+# this plugin writes are honoured — `Bash(cmd:*)` as a prefix and `Bash(cmd)`
+# exactly. An unfamiliar shape matches nothing, because a rule this cannot
+# read is a rule it cannot enforce; bin/request-grant.sh refuses to queue one.
+matches_rules() { # $1 = jq path to the list
   local rule prefix
   while IFS= read -r rule; do
     case $rule in
@@ -64,7 +61,7 @@ matches_policy() {
         [ "$cmd" = "$prefix" ] && return 0
         ;;
     esac
-  done < <(jq -r '.permissions.allow[]?' "$settings_file" 2>/dev/null)
+  done < <(jq -r "$1" "$settings_file" 2>/dev/null)
   return 1
 }
 
@@ -165,6 +162,11 @@ reads_only_ours() {
   [ "$seen" = 1 ]                      # `cat` with no path reads stdin: ask
 }
 
+# Auto mode: the user has said yes to all of this, until they say otherwise.
+# Read from the config every time rather than cached anywhere, so turning it
+# off in Settings takes effect on the very next command.
+auto_mode_on() { [ "$("$plugin_dir/bin/auto-mode.sh" get 2>/dev/null)" = "on" ]; }
+
 # Everything below reasons about ONE command and its arguments. A shell
 # operator means the string is a program, not a command: `clip.sh hi; curl
 # evil` starts with an approved wrapper and ends somewhere else entirely,
@@ -173,9 +175,19 @@ reads_only_ours() {
 # the human, who can read it.
 case $cmd in
   *[\;\|\&\$\`\(\)\<\>]* | *$'\n'* | *$'\r'*)
-    ;;   # a program: neither branch below may fire, so it goes to the human
+    # A program, not a command: no rule may match it. Auto mode still does,
+    # because auto mode is exactly "stop asking me about commands".
+    auto_mode_on && decide allow "Auto mode is on — the user approved every command until they turn it off in Settings."
+    ;;
   *)
-    matches_policy && silent
+    # "Never this" outranks "yes to everything": a deny rule is the one thing
+    # auto mode does not override. What neither can see is a denied command
+    # hidden inside a compound string — but a compound string never reaches
+    # auto mode either, it goes to the card.
+    matches_rules '.permissions.deny[]?' &&
+      decide deny "Your permission policy denies that command. Do not look for another way to run it."
+    auto_mode_on && decide allow "Auto mode is on — the user approved every command until they turn it off in Settings."
+    matches_rules '.permissions.allow[]?' && silent
     reads_only_ours && decide allow "A read, confined to the assistant's own directories."
     ;;
 esac

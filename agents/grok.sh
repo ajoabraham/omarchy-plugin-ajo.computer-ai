@@ -25,7 +25,33 @@ while IFS= read -r rule; do
   [ -n "$rule" ] && allow_flags+=(--allow "$rule")
 done < <(jq -r '.permissions.allow[]' "$COMPUTER_SETTINGS_FILE" 2>/dev/null)
 
+# Whatever the user has said "never" to, said to this harness in its own
+# words. --deny is honoured here (measured); --allow is not exhaustive.
+deny_flags=()
+while IFS= read -r rule; do
+  [ -n "$rule" ] && deny_flags+=(--deny "$rule")
+done < <(jq -r '.permissions.deny[]?' "$COMPUTER_SETTINGS_FILE" 2>/dev/null)
+
+# The shell is denied outright here, and that is the whole permission story
+# for this adapter.
+#
+# Measured on this machine: `grok -p … --allow Read` still ran `id -un`
+# through the shell tool, exactly as Claude Code does — an allow list that
+# does not constrain. Claude Code has a PreToolUse hook, which is where
+# bin/bash-gate.sh puts the card; grok has no such seam, so there is nowhere
+# to ask the user and no way to hold the wrapper policy up. What it does
+# honour is --deny (also measured: `--deny Bash` blocked the same command).
+#
+# So this adapter answers and does not act, the same shape the ChatGPT one
+# already has. Tier 1 through grok would be a list nothing enforces, which is
+# the exact thing this plugin stopped shipping.
+deny_flags+=(--deny "Bash")
+
 prompt="$COMPUTER_INSTRUCTIONS
+
+NOTE: In this harness the shell is closed to you — you can look things up and
+answer, but not launch apps or change anything on the desktop. Say so if
+asked to act, and mention that the Claude assistant can do it.
 
 Request: $1"
 
@@ -61,8 +87,8 @@ bounded() {
 }
 
 if [ "$COMPUTER_CONV_STARTED" = "1" ]; then
-  if bounded grok -p "$prompt" --resume "$COMPUTER_CONV_ID" "${model_flags[@]}" "${allow_flags[@]}"; then
+  if bounded grok -p "$prompt" --resume "$COMPUTER_CONV_ID" "${model_flags[@]}" "${allow_flags[@]}" "${deny_flags[@]}"; then
     exit 0
   fi
 fi
-bounded grok -p "$prompt" --session-id "$COMPUTER_CONV_ID" "${model_flags[@]}" "${allow_flags[@]}"
+bounded grok -p "$prompt" --session-id "$COMPUTER_CONV_ID" "${model_flags[@]}" "${allow_flags[@]}" "${deny_flags[@]}"

@@ -196,6 +196,26 @@ commands. Know the boundaries:
 - The activity log is local: `~/.local/share/computer-ai/state/activity.jsonl`,
   truncated at the start of every turn. It holds clipped one-line summaries
   of tool calls, so treat it like scrollback, not like a secret store.
+- What enforces the tiers differs by assistant, so the Assistant dropdown is
+  also a security choice. **Claude** enforces them: `bin/bash-gate.sh` and
+  `bin/chrome-gate.sh` run as `PreToolUse` hooks, ahead of the CLI's own
+  permission system. **ChatGPT** runs in Codex's read-only sandbox and takes
+  no actions. **Grok** has no hook seam, and its allow list does not
+  constrain its shell either (measured: `grok -p … --allow Read` still ran
+  `id -un`), so there is nowhere to put the card — its shell is closed
+  outright with `--deny`, which it does honour. It answers and reads; it does
+  not act. Tier 1 through an assistant that cannot enforce it would be a list
+  nothing checks, which is the thing this plugin stopped shipping.
+- A rule you can approve is a rule that works. `bin/request-grant.sh` refuses
+  to queue a shell rule the gate could never match — a wildcard inside it, or
+  no command at all — and tells the agent what to ask for instead, rather
+  than letting you approve something that silently does nothing and comes
+  back next turn.
+- `permissions.deny` means never, and outranks auto mode. It is honoured by
+  the shell gate and passed to the harness as well (`--disallowedTools` for
+  Claude, `--deny` for Grok — both measured to bite where the allow list does
+  not). Nothing writes deny rules for you; add them to
+  `~/.local/share/computer-ai/claude-settings.json` yourself.
 - Browser control (Claude harness) touches your real, logged-in Chromium and
   additionally requires a one-time automation grant in the Claude browser
   extension, where per-site limits are also available. The ChatGPT harness
